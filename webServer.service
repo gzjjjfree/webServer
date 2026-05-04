@@ -1,0 +1,37 @@
+# 直接编辑系统服务文件
+# sudo nano /usr/lib/systemd/system/webServer.service
+
+[Unit]
+Description=Go Multi-Domain Web Server
+After=network.target
+
+[Service]
+# Linux 规定绑定 80 端口需要 root 权限
+User=root
+# 你的程序存放的目录
+WorkingDirectory=/usr/local/webServer
+# 程序执行路径
+ExecStart=/usr/local/webServer/webServer
+# 崩溃后自动重启
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+
+# 使用复制及重新加载系统服务
+# sudo cp /usr/local/webServer/webServer.service /usr/lib/systemd/system/webServer.service
+# sudo systemctl daemon-reload
+
+# 启动及停止服务
+# sudo systemctl start webServer
+# sudo systemctl stop webServer
+
+# 设置开机自启动及取消自启动
+# sudo systemctl enable webServer
+# sudo systemctl disable webServer
+
+# 查看运行状态
+# sudo systemctl status webServer
+
+# 代码编写完成后，使用以下命令构建 Go 程序
+# go build -o webServer webServer.go

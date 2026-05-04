@@ -1,0 +1,13 @@
+{
+    "v2rayPort": "10001",
+    "getApiPort": "10002",
+    "postApiPort": "10003",
+    "grpcApiPort": "10004",
+    "isServers": "false",
+    "isWs": "/ws",
+    "servers": [
+        "example.com",
+        "www.example.com",
+        "api.test.com"
+    ]
+}
