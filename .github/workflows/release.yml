@@ -1,0 +1,54 @@
+name: webServer Multi-Version Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # --- 任务 1: 构建 命令行 (CLI) 版本 ---
+  build-cli:
+    name: Build CLI
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64, ext: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.25.5", cache: true }
+      - name: Build
+        run: |
+          OUTPUT_NAME="webServer"
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+          go build -ldflags "-s -w" -o release/$OUTPUT_NAME .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webServer
+          path: release/*  
+
+  # --- 汇总并正式发布 ---
+  publish:
+    name: Finalize Release
+    needs: [build-cli]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./all-files
+          merge-multiple: true # 将所有子任务的文件合并到一个目录
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./all-files/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
