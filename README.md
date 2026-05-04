@@ -38,10 +38,10 @@ sudo ./webServer
 
 ```json
 {
-  "v2rayAddr": "10001",
-  "getApiAddr": "10002",
-  "postApiAddr": "10003",
-  "grpcApiAddr": "10004",
+  "v2rayPort": "10001",
+  "getApiPort": "10002",
+  "postApiPort": "10003",
+  "grpcApiPort": "10004",
   "isWs": "/ws",
   "isServers": "true",
   "servers": ["yourdomain1.com", "yourdomain2.com"]
