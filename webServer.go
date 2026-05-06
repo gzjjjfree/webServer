@@ -11,7 +11,9 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/crypto/acme/autocert"
 )
@@ -58,30 +60,15 @@ func RegisterHostRouter() {
 		log.Fatalf("无法读取配置文件: %v", err)
 	}
 
-	var conf Config
+	var conf *Config
 	if err := json.Unmarshal(confFile, &conf); err != nil {
 		log.Fatalf("配置文件解析失败: %v", err)
-	}
-
-	// 定义动态 Host 策略
-	// 这个函数会在接收到新的 HTTPS 请求时被调用，决定是否为该域名申请证书
-	dynamicHostPolicy := func(ctx context.Context, host string) error {
-		if conf.IsServers != "true" {
-			return nil // 如果不开启限制，允许所有指向本机的域名申请
-		}
-
-		for _, s := range conf.Servers {
-			if host == s {
-				return nil // 在白名单内，准许申请
-			}
-		}
-		return fmt.Errorf("acme/autocert: host %q not configured in server_conf.json", host)
 	}
 
 	// --------- 配置证书管理器 -------------
 	certManager := autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
-		HostPolicy: dynamicHostPolicy, // 使用我们定义的动态策略
+		HostPolicy: GetRateLimitedHostPolicy(conf), // 使用我们定义的动态策略
 		Cache:      autocert.DirCache("certs"),
 	}
 
@@ -196,4 +183,41 @@ func RegisterHostRouter() {
 			log.Fatalf("HTTPS 启动失败: %v", err)
 		}
 	}()
+}
+
+// 记录域名上一次申请/校验的时间
+var lastRequestTime sync.Map
+
+func GetRateLimitedHostPolicy(conf *Config) autocert.HostPolicy {
+	return func(ctx context.Context, host string) error {
+		normalizedHost := strings.ToLower(strings.TrimSpace(host))
+
+		// 1. 基本白名单校验 (你原有的逻辑)
+		if conf.IsServers == "true" {
+			isValid := false
+			for _, s := range conf.Servers {
+				if normalizedHost == strings.ToLower(s) {
+					isValid = true
+					break
+				}
+			}
+			if !isValid {
+				return fmt.Errorf("acme/autocert: host %q not allowed", host)
+			}
+		}
+
+		// 2. 频率限制逻辑 (10分钟限制)
+		now := time.Now()
+		if val, ok := lastRequestTime.Load(normalizedHost); ok {
+			lastTime := val.(time.Time)
+			if now.Sub(lastTime) < 10*time.Minute {
+				// 如果距离上次申请不足10分钟，拒绝触发 ACME 流程
+				return fmt.Errorf("acme/autocert: rate limit exceeded for %q (10 min limit)", host)
+			}
+		}
+
+		// 校验通过，更新该域名的最后访问时间
+		lastRequestTime.Store(normalizedHost, now)
+		return nil
+	}
 }
