@@ -116,7 +116,7 @@ fi
 # 生成 v5 服务配置文件
 # 生成并存储到一个变量中
 USER_UUID=$(cat /proc/sys/kernel/random/uuid)
-echo "本次生成的 UUID 为: $USER_UUID"
+echo -e "本次生成的 UUID 为:  \e[1;37;44m $USER_UUID\e[0m";
 
 # 生成服务端配置文件
 if [ ! -f "$V5RESULT_DIR/v5_conf.json" ]; then
@@ -355,9 +355,9 @@ After=network.target
 # Linux 规定绑定 80 端口需要 root 权限
 User=root
 # 你的程序存放的目录
-WorkingDirectory=$V5RESULT_DIR
+WorkingDirectory=/usr/local/myserver/v5-result
 # 程序执行路径
-ExecStart=$V5RESULT_DIR/v5-result run -c v5-conf.json
+ExecStart=/usr/local/myserver/v5-result/v5-result run -c v5_conf.json
 # 崩溃后自动重启
 Restart=always
 
@@ -365,7 +365,7 @@ Restart=always
 WantedBy=multi-user.target
 
 # 使用复制及重新加载系统服务
-# sudo cp $V5RESULT_DIR/v5-result.service /usr/lib/systemd/system/v5-result.service
+# sudo cp /usr/local/myserver/v5-result/v5-result.service /usr/lib/systemd/system/v5-result.service
 # sudo systemctl daemon-reload
 
 # 启动及停止服务

@@ -16,6 +16,9 @@ import (
 	"time"
 
 	"golang.org/x/crypto/acme/autocert"
+	"golang.org/x/sync/singleflight"
+
+	"github.com/gzjjjfree/loggz"
 )
 
 func main() {
@@ -57,12 +60,12 @@ func RegisterHostRouter() {
 	// 读取并解析配置文件
 	confFile, err := os.ReadFile("server_conf.json")
 	if err != nil {
-		log.Fatalf("无法读取配置文件: %v", err)
+		loggz.WriteErrLog(fmt.Sprintf("无法读取配置文件: %v", err))
 	}
 
 	var conf *Config
 	if err := json.Unmarshal(confFile, &conf); err != nil {
-		log.Fatalf("配置文件解析失败: %v", err)
+		loggz.WriteErrLog(fmt.Sprintf("配置文件解析失败: %v", err))
 	}
 
 	// --------- 配置证书管理器 -------------
@@ -105,7 +108,7 @@ func RegisterHostRouter() {
 
 		// --- 错误处理 (可选) ---
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("代理转发错误: %v", err)
+			loggz.WriteErrLog(fmt.Sprintf("代理转发错误: %v", err))
 			w.WriteHeader(http.StatusBadGateway)
 		},
 	}
@@ -162,7 +165,7 @@ func RegisterHostRouter() {
 		// 这里的第二个参数填 nil 表示自动处理跳转，或者填你的 router 兼容非加密访问
 		err := http.ListenAndServe(":80", certManager.HTTPHandler(nil))
 		if err != nil {
-			log.Fatalf("80端口启动失败: %v", err)
+			loggz.WriteErrLog(fmt.Sprintf("80端口启动失败: %v", err))
 		}
 	}()
 
@@ -175,12 +178,12 @@ func RegisterHostRouter() {
 		TLSConfig: certManager.TLSConfig(),
 	}
 
-	log.Println("HTTPS 服务器启动成功，监听 443 端口...")
+	loggz.WriteInfoLog("HTTPS 服务器启动成功，监听 443 端口...")
 	// ListenAndServeTLS 第二个和第三个参数留空，因为 certManager 会提供证书
 	go func() {
-		log.Println("HTTPS 服务器启动中...")
+		loggz.WriteInfoLog("HTTPS 服务器启动中...")
 		if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTPS 启动失败: %v", err)
+			loggz.WriteErrLog(fmt.Sprintf("HTTPS 启动失败: %v", err))
 		}
 	}()
 }
@@ -188,36 +191,52 @@ func RegisterHostRouter() {
 // 记录域名上一次申请/校验的时间
 var lastRequestTime sync.Map
 
+// 声明全局的 singleflight Group
+var sfGroup singleflight.Group
+
 func GetRateLimitedHostPolicy(conf *Config) autocert.HostPolicy {
 	return func(ctx context.Context, host string) error {
-		normalizedHost := strings.ToLower(strings.TrimSpace(host))
+		// 使用 singleflight 包装逻辑，host 作为共享锁的 Key
+		// 当有多个相同的 host 并发请求时，只有一个会真正执行内部的匿名函数
+		_, err, shared := sfGroup.Do(host, func() (interface{}, error) {
+			loggz.WriteInfoLog("[DEBUG] 执行校验逻辑，域名:" + host)
+			normalizedHost := strings.ToLower(strings.TrimSpace(host))
 
-		// 1. 基本白名单校验 (你原有的逻辑)
-		if conf.IsServers == "true" {
-			isValid := false
-			for _, s := range conf.Servers {
-				if normalizedHost == strings.ToLower(s) {
-					isValid = true
-					break
+			// 1. 基本白名单校验
+			if conf.IsServers == "true" {
+				isValid := false
+				for _, s := range conf.Servers {
+					if normalizedHost == strings.ToLower(s) {
+						isValid = true
+						break
+					}
+				}
+				if !isValid {
+					// 注意 singleflight.Do 返回两个值，这里需要返回 nil, error
+					return nil, fmt.Errorf("acme/autocert: host %q not allowed", host)
 				}
 			}
-			if !isValid {
-				return fmt.Errorf("acme/autocert: host %q not allowed", host)
+
+			// 2. 频率限制逻辑
+			now := time.Now()
+			if val, ok := lastRequestTime.Load(normalizedHost); ok {
+				lastTime := val.(time.Time)
+				if now.Sub(lastTime) < 15*time.Second {
+					// 如果距离上次申请不足限制时间，拒绝触发 ACME 流程
+					return nil, fmt.Errorf("acme/autocert: rate limit exceeded for %q", host)
+				}
 			}
+
+			// 校验通过，更新该域名的最后访问时间
+			lastRequestTime.Store(normalizedHost, now)
+			loggz.WriteInfoLog("允许申请/校验域名:" + host)
+			return nil, nil
+		})
+
+		if shared {
+			loggz.WriteInfoLog(fmt.Sprintf("[DEBUG] 域名 %s 触发了 singleflight 合并等待", host))
 		}
 
-		// 2. 频率限制逻辑 (10分钟限制)
-		now := time.Now()
-		if val, ok := lastRequestTime.Load(normalizedHost); ok {
-			lastTime := val.(time.Time)
-			if now.Sub(lastTime) < 10*time.Minute {
-				// 如果距离上次申请不足10分钟，拒绝触发 ACME 流程
-				return fmt.Errorf("acme/autocert: rate limit exceeded for %q (10 min limit)", host)
-			}
-		}
-
-		// 校验通过，更新该域名的最后访问时间
-		lastRequestTime.Store(normalizedHost, now)
-		return nil
+		return err
 	}
 }
