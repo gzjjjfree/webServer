@@ -32,7 +32,7 @@ echo
 echo "正在准备目录结构...";
 echo
 mkdir -p "$WEBSERVER_DIR/html"
-mkdir -p "$V5RESULT_DIR"
+mkdir -p "$V5RESULT_DIR/windows"
 
 # --- 下载函数 ---
 download_file() {
@@ -85,13 +85,13 @@ echo "v5-result 已部署";
 echo
 
 # 3. 部署 v5-result-windows
-download_file "$REPO_V5RESULT" "windows-$TARGET_ARCH" "$V5RESULT_DIR/v5-result-windows.exe" "$API_URL"
+download_file "$REPO_V5RESULT" "windows-$TARGET_ARCH" "$V5RESULT_DIR/windows/v5-result-windows.exe" "$API_URL"
 echo "v5-result-windows 已部署";
 echo
 
 # 4. 下载 geosite.dat (直接传入 Raw 链接，函数会自动识别并直接下载)
 RAW_URL="https://raw.githubusercontent.com/gzjjjfree/v5-result/v5-result/geosite.dat"
-download_file "$REPO_V5RESULT" "geosite" "$V5RESULT_DIR/geosite.dat" "$RAW_URL"
+download_file "$REPO_V5RESULT" "geosite" "$V5RESULT_DIR/windows/geosite.dat" "$RAW_URL"
 echo "geosite.dat 已下载";
 echo
 
@@ -109,15 +109,15 @@ if [ ! -f "$WEBSERVER_DIR/server_conf.json" ]; then
   "servers": ["yourdomain.com", "anotherdomain.com"]
 }
 EOF
-    echo "已生成默认 server_conf.json。isServers 默认为 false 适配所有域名, 请根据需要修改为 true 并添加服务器域名。";
+    echo -e "已生成默认 server_conf.json。isServers 默认为 \e[1;37;44mfalse\e[0m 适配所有域名, 请根据需要修改为 true 并添加服务器域名。";
     echo
 fi
 
 # 生成 v5 服务配置文件
 # 生成并存储到一个变量中
 USER_UUID=$(cat /proc/sys/kernel/random/uuid)
-echo -e "本次生成的 UUID 为:  \e[1;37;44m $USER_UUID\e[0m";
-
+echo -e "本次生成的 UUID 为:  \e[1;37;44m$USER_UUID\e[0m";
+echo
 # 生成服务端配置文件
 if [ ! -f "$V5RESULT_DIR/v5_conf.json" ]; then
     cat <<EOF > "$V5RESULT_DIR/v5_conf.json"
@@ -152,13 +152,12 @@ if [ ! -f "$V5RESULT_DIR/v5_conf.json" ]; then
   }]
 }
 EOF
-    echo "已生成 v5-result 服务端默认配置文件 v5_conf.json。";
-    echo
+    echo -e "已生成 v5-result 服务端默认配置文件 \e[1;37;44mv5_conf.json\e[0m。";    
 fi
 
 # 生成 v5-result-windows 客户端配置文件
-if [ ! -f "$V5RESULT_DIR/config.json" ]; then
-    cat <<EOF > "$V5RESULT_DIR/config.json"
+if [ ! -f "$V5RESULT_DIR/windows/config.json" ]; then
+    cat <<EOF > "$V5RESULT_DIR/windows/config.json"
 {
   "inbounds": [
     {
@@ -266,8 +265,7 @@ if [ ! -f "$V5RESULT_DIR/config.json" ]; then
 EOF
     echo "已生成 v5-result-windows 客户端默认配置文件 config.json。";
     echo
-    echo "请根据需要修改 config.json 中的服务器地址、端口、UUID 和 TLS 设置等参数，以确保客户端能够正确连接到服务器。";
-    echo
+    echo -e "在客户端请根据需要修改 \e[1;37;44mconfig.json\e[0m 中的服务器地址、端口、UUID 和 TLS 设置等参数，以确保客户端能够正确连接到服务器。";    
     echo -e "\e[1;37;44m 特别注意 config.json 中的 "echDohServer" 设置, 如还没设置 CF 解释 ECH 的 WORKERS, 请先屏蔽它。\e[0m";
     echo
 fi
@@ -321,25 +319,19 @@ FILE_B="/usr/lib/systemd/system/webServer.service"
 # 分别判断并写入
 # 检查第一个路径（你的项目目录）
 if [ ! -f "$FILE_A" ]; then
-    echo "$SERVICE_TEMPLATE" > "$FILE_A"
-    echo
-    echo "已在 $FILE_A 生成服务文件"
-    echo
+    echo "$SERVICE_TEMPLATE" > "$FILE_A"    
+    echo "已在 $FILE_A 生成服务文件"    
 else
-    echo "文件 $FILE_A 已存在，跳过"
-    echo
+    echo "文件 $FILE_A 已存在，跳过"    
 fi
 
 # 检查第二个路径（系统服务目录）
 if [ ! -f "$FILE_B" ]; then
     # 使用 sudo tee 确保有权限写入系统目录
-    echo "$SERVICE_TEMPLATE" | sudo tee "$FILE_B" > /dev/null
-    echo
-    echo "已在 $FILE_B 生成系统服务文件"
-    echo
+    echo "$SERVICE_TEMPLATE" | sudo tee "$FILE_B" > /dev/null   
+    echo "已在 $FILE_B 生成系统服务文件"    
 else
-    echo "文件 $FILE_B 已存在，跳过"
-    echo
+    echo "文件 $FILE_B 已存在，跳过"    
 fi
 
 # 生成 v5-result 服务自动化启动文件, 将服务内容定义为变量
@@ -391,29 +383,24 @@ FILE_D="/usr/lib/systemd/system/v5-result.service"
 # 分别判断并写入
 # 检查第一个路径（你的项目目录）
 if [ ! -f "$FILE_C" ]; then
-    echo "$V5_TEMPLATE" > "$FILE_C"
-    echo
-    echo "已在 $FILE_C 生成服务文件"
-    echo
+    echo "$V5_TEMPLATE" > "$FILE_C"    
+    echo "已在 $FILE_C 生成服务文件"   
 else
-    echo "文件 $FILE_C 已存在，跳过"
-    echo
+    echo "文件 $FILE_C 已存在，跳过"   
 fi
 
 # 检查第二个路径（系统服务目录）
 if [ ! -f "$FILE_D" ]; then
     # 使用 sudo tee 确保有权限写入系统目录
-    echo "$V5_TEMPLATE" | sudo tee "$FILE_D" > /dev/null
-    echo
-    echo "已在 $FILE_D 生成系统服务文件"
-    echo
+    echo "$V5_TEMPLATE" | sudo tee "$FILE_D" > /dev/null   
+    echo "已在 $FILE_D 生成系统服务文件"    
 else
-    echo "文件 $FILE_D 已存在，跳过"
-    echo
+    echo "文件 $FILE_D 已存在，跳过"    
 fi
 
+echo
+echo "正在设置系统服务...";
 sudo systemctl daemon-reload
-echo "已重新加载系统服务配置";
 
 sudo systemctl enable webServer
 sudo systemctl start webServer
@@ -423,16 +410,14 @@ sudo systemctl start v5-result
 echo "------------------------------------------------";
 echo "部署完成！";
 echo
-echo "请根据生成的服务文件说明，使用 systemctl 管理服务的启动、停止和开机自启。脚本运行时已运行相关命令。";
+echo -e "请根据生成的服务文件说明，使用 systemctl 管理服务的启动、停止和开机自启。脚本运行时\e[1;37;44m已运行\e[0m相关命令启动。";
 echo
-echo "如果需要修改前端服务配置，请编辑 /usr/local/myserver/webServer/server_conf.json 文件。";
-echo
-echo "如果需要修改 v5-result 服务配置，请编辑 /usr/local/myserver/v5-result/v5_conf.json 文件。";
+echo -e "如果需要修改前端服务配置，请编辑 /usr/local/myserver/webServer/\e[1;37;44mserver_conf.json\e[0m] 文件。";
+echo -e "如果需要修改 v5-result 服务配置，请编辑 /usr/local/myserver/v5-result/\e[1;37;44mv5_conf.json\e[0m] 文件。";
 echo 
-echo -e "\e[1;37;44m 请将 /usr/local/myserver/v5-result/v5-result-windows.exe、config.json、geosite.dat 文件复制到 Windows 客户端上，并在 Windows 上使用相应的命令行工具运行它。\e[0m";
-echo ""
-echo -e "\e[1;37;44m 可以将 v5-result-windows.exe 生成快捷方式，在属性->目标行末添加参数，如引号里的内容 \" run\", 以便在 Windows 上直接双击运行服务。\e[0m";
-echo " "
+echo -e "请将 /usr/local/myserver/v5-result/windows/\e[1;37;44mv5-result-windows.exe、config.json、geosite.dat 文件复制到 Windows 客户端\e[0m上, 并在 Windows 上使用相应的命令行工具运行它。";
+
+echo -e "可以将 v5-result-windows.exe \e[1;37;44m生成快捷方式\e[0m, 在属性->目标行末添加参数\e[1;37;44m run\e[0m, 以便在 Windows 上直接双击运行服务。";
 echo "v5-result-windows.exe 的配置文件为同目录下的 config.json。";
 echo "------------------------------------------------";
 
