@@ -196,13 +196,23 @@ var sfGroup singleflight.Group
 
 func GetRateLimitedHostPolicy(conf *Config) autocert.HostPolicy {
 	return func(ctx context.Context, host string) error {
-		// 使用 singleflight 包装逻辑，host 作为共享锁的 Key
-		// 当有多个相同的 host 并发请求时，只有一个会真正执行内部的匿名函数
-		_, err, shared := sfGroup.Do(host, func() (interface{}, error) {
-			loggz.WriteInfoLog("[DEBUG] 执行校验逻辑，域名:" + host)
-			normalizedHost := strings.ToLower(strings.TrimSpace(host))
+		normalizedHost := strings.ToLower(strings.TrimSpace(host))
 
-			// 1. 基本白名单校验
+		// --- 核心优化 1：提前检查频率（抢占式） ---
+		now := time.Now()
+		if val, ok := lastRequestTime.Load(normalizedHost); ok {
+			if now.Sub(val.(time.Time)) < 15*time.Second {
+				// 如果在 15 秒内，直接拒绝，不再进入 singleflight
+				return fmt.Errorf("acme/autocert: too frequent requests for %q", host)
+			}
+		}
+
+		// --- 核心优化 2：使用 singleflight 保证同一时间只有一个逻辑在跑 ---
+		_, err, _ := sfGroup.Do(host, func() (interface{}, error) {
+			// 进入这里说明是“第一个”或者“15秒后第一个”请求
+			loggz.WriteInfoLog("[DEBUG] 正在执行校验/申请流程: " + host)
+
+			// 1. 白名单校验
 			if conf.IsServers == "true" {
 				isValid := false
 				for _, s := range conf.Servers {
@@ -212,30 +222,16 @@ func GetRateLimitedHostPolicy(conf *Config) autocert.HostPolicy {
 					}
 				}
 				if !isValid {
-					// 注意 singleflight.Do 返回两个值，这里需要返回 nil, error
 					return nil, fmt.Errorf("acme/autocert: host %q not allowed", host)
 				}
 			}
 
-			// 2. 频率限制逻辑
-			now := time.Now()
-			if val, ok := lastRequestTime.Load(normalizedHost); ok {
-				lastTime := val.(time.Time)
-				if now.Sub(lastTime) < 15*time.Second {
-					// 如果距离上次申请不足限制时间，拒绝触发 ACME 流程
-					return nil, fmt.Errorf("acme/autocert: rate limit exceeded for %q", host)
-				}
-			}
+			// 2. 校验通过，立即更新时间（防止后续请求在 15s 内进来）
+			lastRequestTime.Store(normalizedHost, time.Now())
 
-			// 校验通过，更新该域名的最后访问时间
-			lastRequestTime.Store(normalizedHost, now)
-			loggz.WriteInfoLog("允许申请/校验域名:" + host)
+			loggz.WriteInfoLog("允许申请/校验域名: " + host)
 			return nil, nil
 		})
-
-		if shared {
-			loggz.WriteInfoLog(fmt.Sprintf("[DEBUG] 域名 %s 触发了 singleflight 合并等待", host))
-		}
 
 		return err
 	}
