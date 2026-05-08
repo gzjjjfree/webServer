@@ -85,13 +85,13 @@ echo "v5-result 已部署";
 echo
 
 # 3. 部署 v5-result-windows
-download_file "$REPO_V5RESULT" "windows-$TARGET_ARCH" "$WEBSERVER_DIR/webServer/html/windows/v5-result-windows.exe" "$API_URL"
+download_file "$REPO_V5RESULT" "windows-$TARGET_ARCH" "$WEBSERVER_DIR/html/windows/v5-result-windows.exe" "$API_URL"
 echo "v5-result-windows 已部署";
 echo
 
 # 4. 下载 geosite.dat (直接传入 Raw 链接，函数会自动识别并直接下载)
 RAW_URL="https://raw.githubusercontent.com/gzjjjfree/v5-result/v5-result/geosite.dat"
-download_file "$REPO_V5RESULT" "geosite" "$WEBSERVER_DIR/webServer/html/windows/geosite.dat" "$RAW_URL"
+download_file "$REPO_V5RESULT" "geosite" "$WEBSERVER_DIR/html/windows/geosite.dat" "$RAW_URL"
 echo "geosite.dat 已下载";
 echo
 
@@ -156,8 +156,8 @@ EOF
 fi
 
 # 生成 v5-result-windows 客户端配置文件
-if [ ! -f "$WEBSERVER_DIR/webServer/html/windows/config.json" ]; then
-    cat <<EOF > "$WEBSERVER_DIR/webServer/html/windows/config.json"
+if [ ! -f "$WEBSERVER_DIR/html/windows/config.json" ]; then
+    cat <<EOF > "$WEBSERVER_DIR/html/windows/config.json"
 {
   "inbounds": [
     {
@@ -190,7 +190,7 @@ if [ ! -f "$WEBSERVER_DIR/webServer/html/windows/config.json" ]; then
             "port": 443,
             "users": [
               {
-                "id": "$USER_UUID",
+                "id": "服务器生成的 UUID, 修改的话需要和服务器端一致",
                 "encryption": "none"
               }
             ]
@@ -415,8 +415,11 @@ echo
 echo -e "如果需要修改前端服务配置，请编辑 /usr/local/myserver/webServer/\e[1;37;44mserver_conf.json\e[0m] 文件。";
 echo -e "如果需要修改 v5-result 服务配置，请编辑 /usr/local/myserver/v5-result/\e[1;37;44mv5_conf.json\e[0m] 文件。";
 echo 
+echo -e "域名的使用说明: 如果域名通过 cloudflare 解析并启用了 CDN, 请确保 SSL/TLS 加密模式为: \e[1;37;44m自动 SSL/TLS(默认)\e[0m。";
+echo 
 echo -e "请将 /usr/local/myserver/webServer/hmtl/windows/\e[1;37;44mv5-result-windows.exe、config.json、geosite.dat 文件复制到 Windows 客户端\e[0m上, 并在 Windows 上使用相应的命令行工具运行它。";
-
+echo -e "下载文件可以通过指向服务器的域名访问 \e[1;37;44mhttp://yourdomain.com/windows/\e[0m 来获取, 也可以直接从服务器上复制。";
+echo -e "在 Windows 上运行 v5-result-windows.exe 的命令示例: \e[1;37;44mv5-result-windows.exe run -c config.json\e[0m";
 echo -e "可以将 v5-result-windows.exe \e[1;37;44m生成快捷方式\e[0m, 在属性->目标行末添加参数\e[1;37;44m run\e[0m, 以便在 Windows 上直接双击运行服务。";
 echo "v5-result-windows.exe 的配置文件为同目录下的 config.json。";
 echo "------------------------------------------------";
