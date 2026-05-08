@@ -31,8 +31,8 @@ echo
 # --- 创建目录 ---
 echo "正在准备目录结构...";
 echo
-mkdir -p "$WEBSERVER_DIR/html"
-mkdir -p "$V5RESULT_DIR/windows"
+mkdir -p "$WEBSERVER_DIR/html/windows"
+mkdir -p "$V5RESULT_DIR"
 
 # --- 下载函数 ---
 download_file() {
@@ -85,13 +85,13 @@ echo "v5-result 已部署";
 echo
 
 # 3. 部署 v5-result-windows
-download_file "$REPO_V5RESULT" "windows-$TARGET_ARCH" "$V5RESULT_DIR/windows/v5-result-windows.exe" "$API_URL"
+download_file "$REPO_V5RESULT" "windows-$TARGET_ARCH" "$WEBSERVER_DIR/webServer/html/windows/v5-result-windows.exe" "$API_URL"
 echo "v5-result-windows 已部署";
 echo
 
 # 4. 下载 geosite.dat (直接传入 Raw 链接，函数会自动识别并直接下载)
 RAW_URL="https://raw.githubusercontent.com/gzjjjfree/v5-result/v5-result/geosite.dat"
-download_file "$REPO_V5RESULT" "geosite" "$V5RESULT_DIR/windows/geosite.dat" "$RAW_URL"
+download_file "$REPO_V5RESULT" "geosite" "$WEBSERVER_DIR/webServer/html/windows/geosite.dat" "$RAW_URL"
 echo "geosite.dat 已下载";
 echo
 
@@ -156,8 +156,8 @@ EOF
 fi
 
 # 生成 v5-result-windows 客户端配置文件
-if [ ! -f "$V5RESULT_DIR/windows/config.json" ]; then
-    cat <<EOF > "$V5RESULT_DIR/windows/config.json"
+if [ ! -f "$WEBSERVER_DIR/webServer/html/windows/config.json" ]; then
+    cat <<EOF > "$WEBSERVER_DIR/webServer/html/windows/config.json"
 {
   "inbounds": [
     {
@@ -415,7 +415,7 @@ echo
 echo -e "如果需要修改前端服务配置，请编辑 /usr/local/myserver/webServer/\e[1;37;44mserver_conf.json\e[0m] 文件。";
 echo -e "如果需要修改 v5-result 服务配置，请编辑 /usr/local/myserver/v5-result/\e[1;37;44mv5_conf.json\e[0m] 文件。";
 echo 
-echo -e "请将 /usr/local/myserver/v5-result/windows/\e[1;37;44mv5-result-windows.exe、config.json、geosite.dat 文件复制到 Windows 客户端\e[0m上, 并在 Windows 上使用相应的命令行工具运行它。";
+echo -e "请将 /usr/local/myserver/webServer/hmtl/windows/\e[1;37;44mv5-result-windows.exe、config.json、geosite.dat 文件复制到 Windows 客户端\e[0m上, 并在 Windows 上使用相应的命令行工具运行它。";
 
 echo -e "可以将 v5-result-windows.exe \e[1;37;44m生成快捷方式\e[0m, 在属性->目标行末添加参数\e[1;37;44m run\e[0m, 以便在 Windows 上直接双击运行服务。";
 echo "v5-result-windows.exe 的配置文件为同目录下的 config.json。";

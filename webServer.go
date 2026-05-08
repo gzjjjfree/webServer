@@ -161,15 +161,20 @@ func RegisterHostRouter() {
 
 	// 开启 80 端口重定向
 	go func() {
-		log.Println("正在监听 80 端口进行证书验证和跳转...")
-		// 这里的第二个参数填 nil 表示自动处理跳转，或者填你的 router 兼容非加密访问
-		err := http.ListenAndServe(":80", certManager.HTTPHandler(nil))
-		if err != nil {
-			loggz.WriteErrLog(fmt.Sprintf("80端口启动失败: %v", err))
+		// 创建一个最基础的处理器，只为了看日志
+		debugHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			loggz.WriteInfoLog(fmt.Sprintf("[RAW-80] 收到任何请求: %s %s %s", r.RemoteAddr, r.Method, r.URL.Path))
+			// 交给 autocert 处理验证
+			certManager.HTTPHandler(nil).ServeHTTP(w, r)
+		})
+
+		loggz.WriteInfoLog("正在启动 80 端口监控...")
+		if err := http.ListenAndServe(":80", debugHandler); err != nil {
+			loggz.WriteErrLog(fmt.Sprintf("80端口监听失败: %v", err))
 		}
 	}()
 
-	log.Println("服务器正在启动，监听 80 端口...")
+	loggz.WriteInfoLog("服务器正在启动，监听 80 端口...")
 
 	// 启动 HTTPS 服务 (端口 443)
 	server := &http.Server{
@@ -197,17 +202,9 @@ var sfGroup singleflight.Group
 func GetRateLimitedHostPolicy(conf *Config) autocert.HostPolicy {
 	return func(ctx context.Context, host string) error {
 		normalizedHost := strings.ToLower(strings.TrimSpace(host))
+		loggz.WriteInfoLog("[DEBUG] 收到证书请求: " + normalizedHost)
 
-		// --- 核心优化 1：提前检查频率（抢占式） ---
-		now := time.Now()
-		if val, ok := lastRequestTime.Load(normalizedHost); ok {
-			if now.Sub(val.(time.Time)) < 15*time.Second {
-				// 如果在 15 秒内，直接拒绝，不再进入 singleflight
-				return fmt.Errorf("acme/autocert: too frequent requests for %q", host)
-			}
-		}
-
-		// --- 核心优化 2：使用 singleflight 保证同一时间只有一个逻辑在跑 ---
+		// --- 使用 singleflight 保证同一时间只有一个逻辑在跑 ---
 		_, err, _ := sfGroup.Do(host, func() (interface{}, error) {
 			// 进入这里说明是“第一个”或者“15秒后第一个”请求
 			loggz.WriteInfoLog("[DEBUG] 正在执行校验/申请流程: " + host)
@@ -226,7 +223,7 @@ func GetRateLimitedHostPolicy(conf *Config) autocert.HostPolicy {
 				}
 			}
 
-			// 2. 校验通过，立即更新时间（防止后续请求在 15s 内进来）
+			// 校验通过，立即更新时间（防止后续请求在 15s 内进来）
 			lastRequestTime.Store(normalizedHost, time.Now())
 
 			loggz.WriteInfoLog("允许申请/校验域名: " + host)
