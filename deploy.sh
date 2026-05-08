@@ -31,7 +31,7 @@ echo
 # --- 创建目录 ---
 echo "正在准备目录结构...";
 echo
-mkdir -p "$WEBSERVER_DIR/html/windows"
+mkdir -p "$WEBSERVER_DIR/html/windows/result"
 mkdir -p "$V5RESULT_DIR"
 
 # --- 下载函数 ---
@@ -93,6 +93,12 @@ echo
 RAW_URL="https://raw.githubusercontent.com/gzjjjfree/v5-result/v5-result/geosite.dat"
 download_file "$REPO_V5RESULT" "geosite" "$WEBSERVER_DIR/html/windows/geosite.dat" "$RAW_URL"
 echo "geosite.dat 已下载";
+echo
+
+# 5. 下载 result.json (如果需要的话，可以直接下载到 Windows 客户端目录)
+RAW_RESULT_URL="https://raw.githubusercontent.com/gzjjjfree/webServer/result/result.json"
+download_file "$REPO_WEBSERVER" "result" "$WEBSERVER_DIR/html/windows/result/result.json" "$RAW_RESULT_URL"
+echo "result.json 已下载";
 echo
 
 # 初始化配置文件 (如果不存在)
