@@ -89,6 +89,11 @@ download_file "$REPO_V5RESULT" "windows-$TARGET_ARCH" "$WEBSERVER_DIR/html/windo
 echo "v5-result-windows 已部署";
 echo
 
+# 3. 部署 v5-result-android
+download_file "$REPO_V5RESULT" "android-$TARGET_ARCH" "$WEBSERVER_DIR/html/windows/v5-result-android" "$API_URL"
+echo "v5-result-android 已部署";
+echo
+
 # 4. 下载 geosite.dat (直接传入 Raw 链接，函数会自动识别并直接下载)
 RAW_URL="https://raw.githubusercontent.com/gzjjjfree/v5-result/v5-result/geosite.dat"
 download_file "$REPO_V5RESULT" "geosite" "$WEBSERVER_DIR/html/windows/geosite.dat" "$RAW_URL"
@@ -116,6 +121,7 @@ if [ ! -f "$WEBSERVER_DIR/server_conf.json" ]; then
 }
 EOF
     echo -e "已生成默认 server_conf.json。isServers 默认为 \e[1;37;44mfalse\e[0m 适配所有域名, 请根据需要修改为 true 并添加服务器域名。";
+    echo -e "\e[1;37;44m isServers \e[0m 为 \e[1;37;44m false \e[0m 时，当有人将域名指向你的服务器 IP 就能连接你的服务器。";
     echo
 fi
 
@@ -272,7 +278,7 @@ EOF
     echo "已生成 v5-result-windows 客户端默认配置文件 config.json。";
     echo
     echo -e "在客户端请根据需要修改 \e[1;37;44mconfig.json\e[0m 中的服务器地址、端口、UUID 和 TLS 设置等参数，以确保客户端能够正确连接到服务器。";    
-    echo -e "\e[1;37;44m 特别注意 config.json 中的 "echDohServer" 设置, 如还没设置 CF 解释 ECH 的 WORKERS, 请先屏蔽它。\e[0m";
+    echo -e "特别注意 config.json 中的 \e[1;37;44mechDohServer\e[0m 设置, 如还没设置 CF 解释 ECH 的 WORKERS, 请先屏蔽它。具体查看 \e[1;37;44mv5-result\e[0m 项目。";
     echo
 fi
 

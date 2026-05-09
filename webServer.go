@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -127,8 +128,15 @@ func RegisterHostRouter() {
 		if conf.IsServers == "true" {
 			isValidServer := false
 			requestHost := strings.Split(r.Host, ":")[0] // 去掉端口号
+			
 			for _, s := range conf.Servers {
-				if requestHost == s {
+				pattern := strings.ToLower(s)
+
+				// 使用 filepath.Match 进行通配符匹配
+				// 它支持 * (匹配任意长度字符串) 和 ? (匹配单个字符)
+				matched, err := filepath.Match(pattern, requestHost)
+
+				if err == nil && matched {
 					isValidServer = true
 					break
 				}
@@ -213,7 +221,13 @@ func GetRateLimitedHostPolicy(conf *Config) autocert.HostPolicy {
 			if conf.IsServers == "true" {
 				isValid := false
 				for _, s := range conf.Servers {
-					if normalizedHost == strings.ToLower(s) {
+					pattern := strings.ToLower(s)
+
+					// 使用 filepath.Match 进行通配符匹配
+					// 它支持 * (匹配任意长度字符串) 和 ? (匹配单个字符)
+					matched, err := filepath.Match(pattern, normalizedHost)
+
+					if err == nil && matched {
 						isValid = true
 						break
 					}
