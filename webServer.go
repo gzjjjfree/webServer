@@ -44,10 +44,33 @@ type Config struct {
 }
 
 // 辅助函数：创建反向代理
-func newProxy(port string) *httputil.ReverseProxy {
+func newProxy(port string, prefix string) *httputil.ReverseProxy {
 	target := fmt.Sprintf("http://127.0.0.1:%s", port)
 	url, _ := url.Parse(target)
-	return httputil.NewSingleHostReverseProxy(url)
+
+	proxy := httputil.NewSingleHostReverseProxy(url)
+
+	// 获取原始的 Director
+	originalDirector := proxy.Director
+
+	// 自定义 Director 来重写路径
+	proxy.Director = func(req *http.Request) {
+		// 先执行默认逻辑（设置 Scheme, Host 等）
+		originalDirector(req)
+
+		// 去掉路径前缀
+		if prefix != "" {
+			// 假设访问 /postapi/login -> 转发后变成 /login
+			// 如果只访问 /postapi -> 转发后变成 /
+			newPath := strings.TrimPrefix(req.URL.Path, prefix)
+			if newPath == "" {
+				newPath = "/"
+			}
+			req.URL.Path = newPath
+		}
+	}
+
+	return proxy
 }
 
 func RegisterHostRouter() {
@@ -100,9 +123,9 @@ func RegisterHostRouter() {
 		},
 	}
 
-	getProxy := newProxy(conf.GetApiPort)
-	postProxy := newProxy(conf.PostApiPort)
-	grpcProxy := newProxy(conf.GrpcApiPort)
+	getProxy := newProxy(conf.GetApiPort, "/getapi")
+	postProxy := newProxy(conf.PostApiPort, "/postapi")
+	grpcProxy := newProxy(conf.GrpcApiPort, "/grpcapi")
 
 	// 静态文件服务器
 	fs := http.FileServer(http.Dir("./html"))
