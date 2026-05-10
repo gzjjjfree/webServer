@@ -24,6 +24,7 @@ WantedBy=multi-user.target
 
 # 启动及停止服务
 # sudo systemctl start webServer
+# sudo systemctl restart webServer
 # sudo systemctl stop webServer
 
 # 设置开机自启动及取消自启动

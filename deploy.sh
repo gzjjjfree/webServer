@@ -115,13 +115,10 @@ if [ ! -f "$WEBSERVER_DIR/server_conf.json" ]; then
   "getApiPort": "10002",
   "postApiPort": "10003",
   "grpcApiPort": "10004",
-  "isWs": "/ws",
-  "isServers": "false",
-  "servers": ["yourdomain.com", "anotherdomain.com"]
+  "isWs": "/ws"
 }
 EOF
-    echo -e "已生成默认 server_conf.json。isServers 默认为 \e[1;37;44mfalse\e[0m 适配所有域名, 请根据需要修改为 true 并添加服务器域名。";
-    echo -e "\e[1;37;44m isServers \e[0m 为 \e[1;37;44m false \e[0m 时，当有人将域名指向你的服务器 IP 就能连接你的服务器。";
+    echo "已生成默认 server_conf.json。";
     echo
 fi
 

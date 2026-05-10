@@ -1,7 +1,7 @@
 package main
 
 import (
-	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,12 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
-	"time"
-
-	"golang.org/x/crypto/acme/autocert"
-	"golang.org/x/sync/singleflight"
 
 	"github.com/gzjjjfree/loggz"
 )
@@ -41,13 +36,11 @@ func main() {
 
 // Config 对应 JSON 配置文件结构
 type Config struct {
-	V2rayPort   string   `json:"v2rayPort"`
-	GetApiPort  string   `json:"getApiPort"`
-	PostApiPort string   `json:"postApiPort"`
-	GrpcApiPort string   `json:"grpcApiPort"`
-	IsWs        string   `json:"isWs"`
-	IsServers   string   `json:"isServers"`
-	Servers     []string `json:"servers"`
+	V2rayPort   string `json:"v2rayPort"`
+	GetApiPort  string `json:"getApiPort"`
+	PostApiPort string `json:"postApiPort"`
+	GrpcApiPort string `json:"grpcApiPort"`
+	IsWs        string `json:"isWs"`
 }
 
 // 辅助函数：创建反向代理
@@ -67,13 +60,6 @@ func RegisterHostRouter() {
 	var conf *Config
 	if err := json.Unmarshal(confFile, &conf); err != nil {
 		loggz.WriteErrLog(fmt.Sprintf("配置文件解析失败: %v", err))
-	}
-
-	// --------- 配置证书管理器 -------------
-	certManager := autocert.Manager{
-		Prompt:     autocert.AcceptTOS,
-		HostPolicy: GetRateLimitedHostPolicy(conf), // 使用我们定义的动态策略
-		Cache:      autocert.DirCache("certs"),
 	}
 
 	// 初始化反向代理
@@ -123,44 +109,19 @@ func RegisterHostRouter() {
 
 	// 3. 核心路由逻辑
 	mainHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 域名校验：检查当前访问的 Host 是否在配置的 servers 列表中
-		// 备注：如果希望所有指向该 IP 的域名都可用，可以跳过此检查
-		if conf.IsServers == "true" {
-			isValidServer := false
-			requestHost := strings.Split(r.Host, ":")[0] // 去掉端口号
-			
-			for _, s := range conf.Servers {
-				pattern := strings.ToLower(s)
-
-				// 使用 filepath.Match 进行通配符匹配
-				// 它支持 * (匹配任意长度字符串) 和 ? (匹配单个字符)
-				matched, err := filepath.Match(pattern, requestHost)
-
-				if err == nil && matched {
-					isValidServer = true
-					break
-				}
-			}
-
-			if !isValidServer {
-				http.Error(w, "Access Denied: Unrecognized Host", http.StatusForbidden)
-				return
-			}
-		}
-
 		// 路径规则匹配
-		switch {
-		case r.URL.Path == conf.IsWs:
+		switch r.URL.Path {
+		case conf.IsWs:
 			if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
 				v2rayProxy.ServeHTTP(w, r)
 			} else {
 				http.Error(w, "Not a WebSocket request", http.StatusBadRequest)
 			}
-		case r.URL.Path == "/getapi":
+		case "/getapi":
 			getProxy.ServeHTTP(w, r)
-		case r.URL.Path == "/postapi":
+		case "/postapi":
 			postProxy.ServeHTTP(w, r)
-		case r.URL.Path == "/grpcapi":
+		case "/grpcapi":
 			grpcProxy.ServeHTTP(w, r)
 		default:
 			fs.ServeHTTP(w, r)
@@ -169,81 +130,88 @@ func RegisterHostRouter() {
 
 	// 开启 80 端口重定向
 	go func() {
-		// 创建一个最基础的处理器，只为了看日志
-		debugHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			loggz.WriteInfoLog(fmt.Sprintf("[RAW-80] 收到任何请求: %s %s %s", r.RemoteAddr, r.Method, r.URL.Path))
-			// 交给 autocert 处理验证
-			certManager.HTTPHandler(nil).ServeHTTP(w, r)
+		loggz.WriteInfoLog("正在启动 80 端口监控并设置 HTTPS 重定向...")
+
+		// 创建一个跳转处理器
+		redirectHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// 1. 获取请求的主机名（去掉可能存在的端口）
+			host := strings.Split(r.Host, ":")[0]
+
+			// 2. 拼接新的 HTTPS URL
+			// 使用 301 (Permanent Redirect) 对 SEO 友好
+			target := "https://" + host + r.URL.Path
+			if len(r.URL.RawQuery) > 0 {
+				target += "?" + r.URL.RawQuery
+			}
+
+			loggz.WriteInfoLog(fmt.Sprintf("[Redirect] HTTP -> HTTPS: %s", target))
+			http.Redirect(w, r, target, http.StatusMovedPermanently)
 		})
 
-		loggz.WriteInfoLog("正在启动 80 端口监控...")
-		if err := http.ListenAndServe(":80", debugHandler); err != nil {
+		// 监听 80 端口并应用跳转逻辑
+		if err := http.ListenAndServe(":80", redirectHandler); err != nil {
 			loggz.WriteErrLog(fmt.Sprintf("80端口监听失败: %v", err))
 		}
 	}()
 
 	loggz.WriteInfoLog("服务器正在启动，监听 80 端口...")
 
-	// 启动 HTTPS 服务 (端口 443)
-	server := &http.Server{
-		Addr:      ":443",
-		Handler:   mainHandler,
-		TLSConfig: certManager.TLSConfig(),
-	}
-
 	loggz.WriteInfoLog("HTTPS 服务器启动成功，监听 443 端口...")
 	// ListenAndServeTLS 第二个和第三个参数留空，因为 certManager 会提供证书
 	go func() {
-		loggz.WriteInfoLog("HTTPS 服务器启动中...")
-		if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+		loggz.WriteInfoLog("HTTPS 服务器启动中，正在扫描证书文件夹...")
+
+		certDir := "certs"
+		files, err := os.ReadDir(certDir)
+		if err != nil {
+			loggz.WriteErrLog(fmt.Sprintf("无法读取证书目录: %v", err))
+			return
+		}
+
+		var certs []tls.Certificate
+
+		for _, file := range files {
+			// 只处理以 .pem 结尾且不是 .key.pem 的文件（避免重复扫描）
+			if !file.IsDir() && strings.HasSuffix(file.Name(), ".pem") && !strings.HasSuffix(file.Name(), ".key.pem") {
+
+				// 提取文件名（如 uk.pem -> uk）
+				prefix := strings.TrimSuffix(file.Name(), ".pem")
+
+				certPath := filepath.Join(certDir, file.Name())
+				// 假设配对的私钥文件名为 域名.key
+				keyPath := filepath.Join(certDir, prefix+".key")
+
+				// 尝试加载这一对证书
+				pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+				if err != nil {
+					loggz.WriteErrLog(fmt.Sprintf("跳过证书 [%s]: 加载失败 %v", prefix, err))
+					continue
+				}
+
+				certs = append(certs, pair)
+				loggz.WriteInfoLog(fmt.Sprintf("成功加载证书: %s", prefix))
+			}
+		}
+
+		if len(certs) == 0 {
+			loggz.WriteErrLog("错误: 未发现任何有效的证书对，HTTPS 将无法启动")
+			return
+		}
+
+		// 3. 将证书切片配置到自定义的 Server 结构体中
+		server := &http.Server{
+			Addr:    ":443",
+			Handler: mainHandler, // 你的主路由
+			TLSConfig: &tls.Config{
+				// Go 底层会利用 SNI 技术，根据客户端请求的域名自动寻找匹配的证书
+				Certificates: certs,
+			},
+		}
+
+		// 4. 启动服务（由于证书已经在 TLSConfig 中指明，这里的路径参数直接传空字符串）
+		err = server.ListenAndServeTLS("", "")
+		if err != nil && err != http.ErrServerClosed {
 			loggz.WriteErrLog(fmt.Sprintf("HTTPS 启动失败: %v", err))
 		}
 	}()
-}
-
-// 记录域名上一次申请/校验的时间
-var lastRequestTime sync.Map
-
-// 声明全局的 singleflight Group
-var sfGroup singleflight.Group
-
-func GetRateLimitedHostPolicy(conf *Config) autocert.HostPolicy {
-	return func(ctx context.Context, host string) error {
-		normalizedHost := strings.ToLower(strings.TrimSpace(host))
-		loggz.WriteInfoLog("[DEBUG] 收到证书请求: " + normalizedHost)
-
-		// --- 使用 singleflight 保证同一时间只有一个逻辑在跑 ---
-		_, err, _ := sfGroup.Do(host, func() (interface{}, error) {
-			// 进入这里说明是“第一个”或者“15秒后第一个”请求
-			loggz.WriteInfoLog("[DEBUG] 正在执行校验/申请流程: " + host)
-
-			// 1. 白名单校验
-			if conf.IsServers == "true" {
-				isValid := false
-				for _, s := range conf.Servers {
-					pattern := strings.ToLower(s)
-
-					// 使用 filepath.Match 进行通配符匹配
-					// 它支持 * (匹配任意长度字符串) 和 ? (匹配单个字符)
-					matched, err := filepath.Match(pattern, normalizedHost)
-
-					if err == nil && matched {
-						isValid = true
-						break
-					}
-				}
-				if !isValid {
-					return nil, fmt.Errorf("acme/autocert: host %q not allowed", host)
-				}
-			}
-
-			// 校验通过，立即更新时间（防止后续请求在 15s 内进来）
-			lastRequestTime.Store(normalizedHost, time.Now())
-
-			loggz.WriteInfoLog("允许申请/校验域名: " + host)
-			return nil, nil
-		})
-
-		return err
-	}
 }

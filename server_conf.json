@@ -3,11 +3,5 @@
     "getApiPort": "10002",
     "postApiPort": "10003",
     "grpcApiPort": "10004",
-    "isWs": "/ws",
-    "isServers": "false",    
-    "servers": [
-        "example.com",
-        "www.example.com",
-        "api.test.com"
-    ]
+    "isWs": "/ws"
 }
