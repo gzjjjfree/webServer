@@ -1,5 +1,7 @@
 certs/
 server_conf.json
+acme_dns_auth*
 v5_conf.json
 *.exe
 webServer
+SEND_KEY.go

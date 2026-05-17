@@ -19,6 +19,9 @@ import (
 )
 
 func main() {
+	if SEND_KEY != "" {
+		sendKey = SEND_KEY
+	}
 	RegisterHostRouter()
 
 	// 保持程序运行
@@ -50,7 +53,7 @@ type CertManager struct {
 	certs   []tls.Certificate
 }
 
-var sendKey = "" // 用于发送数据到微信方糖的密钥，用于方糖给你发送提醒信息
+var sendKey string // 用于发送数据到微信方糖的密钥，用于方糖给你发送提醒信息
 
 // 辅助函数：创建反向代理
 func newProxy(port string, prefix string) *httputil.ReverseProxy {
