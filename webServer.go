@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -12,8 +11,10 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/gzjjjfree/loggz"
 )
 
@@ -43,31 +44,47 @@ type Config struct {
 	IsWs        string `json:"isWs"`
 }
 
+type CertManager struct {
+	certDir string
+	mu      sync.RWMutex
+	certs   []tls.Certificate
+}
+
+var sendKey = "" // 用于发送数据到微信方糖的密钥，用于方糖给你发送提醒信息
+
 // 辅助函数：创建反向代理
 func newProxy(port string, prefix string) *httputil.ReverseProxy {
 	target := fmt.Sprintf("http://127.0.0.1:%s", port)
-	url, _ := url.Parse(target)
+	targetURL, _ := url.Parse(target)
 
-	proxy := httputil.NewSingleHostReverseProxy(url)
+	// 在 Go 1.20+ 中，推荐直接初始化 ReverseProxy 结构体或使用 Rewrite 逻辑
+	proxy := &httputil.ReverseProxy{
+		// 💡 针对 V2Ray 和 gRPC 的流式传输优化，关闭内部缓冲
+		FlushInterval: -1,
 
-	// 获取原始的 Director
-	originalDirector := proxy.Director
+		Rewrite: func(r *httputil.ProxyRequest) {
+			// 设置目标地址
+			// SetURL 会自动处理目标主机的 Scheme 和 Host，并保留查询参数
+			r.SetURL(targetURL)
 
-	// 自定义 Director 来重写路径
-	proxy.Director = func(req *http.Request) {
-		// 先执行默认逻辑（设置 Scheme, Host 等）
-		originalDirector(req)
+			// 确保 V2Ray 收到的是真实域名而不是 127.0.0.1
+			r.Out.Host = r.In.Host
 
-		// 去掉路径前缀
-		if prefix != "" {
-			// 假设访问 /postapi/login -> 转发后变成 /login
-			// 如果只访问 /postapi -> 转发后变成 /
-			newPath := strings.TrimPrefix(req.URL.Path, prefix)
-			if newPath == "" {
-				newPath = "/"
+			// 路径重写逻辑
+			if prefix != "" && prefix != "/ws" {
+				// 此时 r.Out.URL.Path 已经是基于 targetURL 拼接后的路径
+				// 我们直接对发往后端的 Out 请求进行路径修剪
+				newPath := strings.TrimPrefix(r.Out.URL.Path, prefix)
+				if newPath == "" || !strings.HasPrefix(newPath, "/") {
+					newPath = "/" + newPath
+				}
+				r.Out.URL.Path = newPath
 			}
-			req.URL.Path = newPath
-		}
+
+			// 安全增强：设置 X-Forwarded-For, X-Forwarded-Host, X-Forwarded-Proto
+			// 它会自动移除客户端伪造的头部，并填入真实的代理链路信息
+			r.SetXForwarded()
+		},
 	}
 
 	return proxy
@@ -86,43 +103,7 @@ func RegisterHostRouter() {
 	}
 
 	// 初始化反向代理
-	v2rayProxy := &httputil.ReverseProxy{
-		Rewrite: func(pr *httputil.ProxyRequest) {
-			targetUrl, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%s", conf.V2rayPort))
-			if err != nil {
-				log.Fatal("目标地址解析失败:", err)
-			}
-
-			pr.SetURL(targetUrl)
-
-			pr.Out.Host = targetUrl.Host
-
-			pr.Out.Header.Set("Upgrade", "websocket")
-			pr.Out.Header.Set("Connection", "Upgrade")
-
-			pr.SetXForwarded()
-		},
-
-		// --- 性能优化：减少延迟 ---
-		// FlushInterval = -1 表示一旦从后端收到数据就立即发送给客户端
-		// 这对于 WebSocket 这种实时性极高的协议至关重要
-		FlushInterval: -1,
-
-		// --- 响应处理：直接原样返回 ---
-		// 如果后端返回 404、500 或其他自定义状态码，
-		// ModifyResponse 默认不做干预即会原样透传给用户
-		ModifyResponse: func(resp *http.Response) error {
-			// 返回 nil 表示对响应不作修改，直接交给用户
-			return nil
-		},
-
-		// --- 错误处理 (可选) ---
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			loggz.WriteErrLog(fmt.Sprintf("代理转发错误: %v", err))
-			w.WriteHeader(http.StatusBadGateway)
-		},
-	}
-
+	v2rayProxy := newProxy(conf.V2rayPort, "/ws")
 	getProxy := newProxy(conf.GetApiPort, "/getapi")
 	postProxy := newProxy(conf.PostApiPort, "/postapi")
 	grpcProxy := newProxy(conf.GrpcApiPort, "/grpcapi")
@@ -130,25 +111,39 @@ func RegisterHostRouter() {
 	// 静态文件服务器
 	fs := http.FileServer(http.Dir("./html"))
 
-	// 3. 核心路由逻辑
+	// 核心路由逻辑
 	mainHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 路径规则匹配
-		switch r.URL.Path {
-		case conf.IsWs:
-			if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
-				v2rayProxy.ServeHTTP(w, r)
-			} else {
-				http.Error(w, "Not a WebSocket request", http.StatusBadRequest)
-			}
-		case "/getapi":
-			getProxy.ServeHTTP(w, r)
-		case "/postapi":
-			postProxy.ServeHTTP(w, r)
-		case "/grpcapi":
-			grpcProxy.ServeHTTP(w, r)
-		default:
-			fs.ServeHTTP(w, r)
+		path := r.URL.Path
+
+		// 优先判断 WebSocket (V2Ray)
+		if path == conf.IsWs && path != "" && strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
+			loggz.WriteInfoLog("WebSocket 转发: " + r.RequestURI)
+			v2rayProxy.ServeHTTP(w, r)
+			return
 		}
+
+		// 判断 API 路径 (前缀匹配)
+		if strings.HasPrefix(path, "/getapi") {
+			loggz.WriteInfoLog("GetAPI 转发: " + r.RequestURI)
+			getProxy.ServeHTTP(w, r)
+			return
+		}
+
+		if strings.HasPrefix(path, "/postapi") {
+			loggz.WriteInfoLog("PostAPI 转发: " + r.RequestURI)
+			postProxy.ServeHTTP(w, r)
+			return
+		}
+
+		if strings.HasPrefix(path, "/grpcapi") {
+			loggz.WriteInfoLog("PostAPI 转发: " + r.RequestURI)
+			grpcProxy.ServeHTTP(w, r)
+			return
+		}
+
+		// 静态文件
+		loggz.WriteInfoLog("静态资源请求: " + r.RequestURI)
+		fs.ServeHTTP(w, r)
 	})
 
 	// 开启 80 端口重定向
@@ -157,10 +152,10 @@ func RegisterHostRouter() {
 
 		// 创建一个跳转处理器
 		redirectHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// 1. 获取请求的主机名（去掉可能存在的端口）
+			// 获取请求的主机名（去掉可能存在的端口）
 			host := strings.Split(r.Host, ":")[0]
 
-			// 2. 拼接新的 HTTPS URL
+			// 拼接新的 HTTPS URL
 			// 使用 301 (Permanent Redirect) 对 SEO 友好
 			target := "https://" + host + r.URL.Path
 			if len(r.URL.RawQuery) > 0 {
@@ -184,57 +179,129 @@ func RegisterHostRouter() {
 	go func() {
 		loggz.WriteInfoLog("HTTPS 服务器启动中，正在扫描证书文件夹...")
 
-		certDir := "certs"
-		files, err := os.ReadDir(certDir)
-		if err != nil {
-			loggz.WriteErrLog(fmt.Sprintf("无法读取证书目录: %v", err))
-			return
+		// 1. 初始化管理器
+		cm := &CertManager{certDir: "certs"}
+
+		// 2. 初始加载
+		if err := cm.LoadCerts(); err != nil {
+			panic(fmt.Sprintf("初始加载证书失败: %v", err))
 		}
 
-		var certs []tls.Certificate
+		// 3. 开启异步监听
+		cm.WatchConfig()
 
-		for _, file := range files {
-			// 只处理以 .pem 结尾且不是 .key.pem 的文件（避免重复扫描）
-			if !file.IsDir() && strings.HasSuffix(file.Name(), ".pem") && !strings.HasSuffix(file.Name(), ".key.pem") {
-
-				// 提取文件名（如 uk.pem -> uk）
-				prefix := strings.TrimSuffix(file.Name(), ".pem")
-
-				certPath := filepath.Join(certDir, file.Name())
-				// 假设配对的私钥文件名为 域名.key
-				keyPath := filepath.Join(certDir, prefix+".key")
-
-				// 尝试加载这一对证书
-				pair, err := tls.LoadX509KeyPair(certPath, keyPath)
-				if err != nil {
-					loggz.WriteErrLog(fmt.Sprintf("跳过证书 [%s]: 加载失败 %v", prefix, err))
-					continue
-				}
-
-				certs = append(certs, pair)
-				loggz.WriteInfoLog(fmt.Sprintf("成功加载证书: %s", prefix))
-			}
-		}
-
-		if len(certs) == 0 {
-			loggz.WriteErrLog("错误: 未发现任何有效的证书对，HTTPS 将无法启动")
-			return
-		}
-
-		// 3. 将证书切片配置到自定义的 Server 结构体中
+		// 4. 将证书切片配置到自定义的 Server 结构体中
 		server := &http.Server{
-			Addr:    ":443",
-			Handler: mainHandler, // 你的主路由
-			TLSConfig: &tls.Config{
-				// Go 底层会利用 SNI 技术，根据客户端请求的域名自动寻找匹配的证书
-				Certificates: certs,
-			},
+			Addr:      ":443",
+			Handler:   mainHandler, // 你的主路由
+			TLSConfig: cm.GetConfig(),
 		}
 
-		// 4. 启动服务（由于证书已经在 TLSConfig 中指明，这里的路径参数直接传空字符串）
+		// 5. 启动服务（由于证书已经在 TLSConfig 中指明，这里的路径参数直接传空字符串）
 		err = server.ListenAndServeTLS("", "")
 		if err != nil && err != http.ErrServerClosed {
 			loggz.WriteErrLog(fmt.Sprintf("HTTPS 启动失败: %v", err))
 		}
 	}()
+}
+
+// LoadCerts 封装你原有的扫描逻辑
+func (cm *CertManager) LoadCerts() error {
+	files, err := os.ReadDir(cm.certDir)
+	if err != nil {
+		return err
+	}
+
+	var tempCerts []tls.Certificate
+	for _, file := range files {
+		// 匹配逻辑：gzbaobao.pem 且存在 gzbaobao.key
+		if !file.IsDir() && strings.HasSuffix(file.Name(), ".pem") && !strings.HasSuffix(file.Name(), ".key.pem") {
+			prefix := strings.TrimSuffix(file.Name(), ".pem")
+			certPath := filepath.Join(cm.certDir, file.Name())
+			keyPath := filepath.Join(cm.certDir, prefix+".key")
+
+			pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+			if err != nil {
+				fmt.Printf("跳过证书 [%s]: %v\n", prefix, err)
+				continue
+			}
+			tempCerts = append(tempCerts, pair)
+			loggz.WriteInfoLog(fmt.Sprint("成功加载/更新证书: \n", prefix))
+		}
+	}
+
+	cm.mu.Lock()
+	cm.certs = tempCerts
+	cm.mu.Unlock()
+	return nil
+}
+
+// WatchConfig 监听文件夹变动
+func (cm *CertManager) WatchConfig() {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		panic(err)
+	}
+
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				// 监听写入和创建事件
+				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+					loggz.WriteInfoLog("检测到证书文件变动，正在重新加载...")
+					go SendToWechat(sendKey, "证书文件变动", "检测到证书文件变动，正在重新加载...")
+					cm.LoadCerts()
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				loggz.WriteInfoLog(fmt.Sprint("监听错误:", err))
+			}
+		}
+	}()
+
+	err = watcher.Add(cm.certDir)
+	if err != nil {
+		panic(err)
+	}
+}
+
+// GetConfig 获取用于 http.Server 的 TLSConfig
+func (cm *CertManager) GetConfig() *tls.Config {
+	return &tls.Config{
+		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			cm.mu.RLock()
+			defer cm.mu.RUnlock()
+
+			// 自动匹配 SNI 域名
+			for _, cert := range cm.certs {
+				if err := hello.SupportsCertificate(&cert); err == nil {
+					loggz.WriteInfoLog("提供证书域名为: " + hello.ServerName)
+					return &cert, nil
+				}
+			}
+			loggz.WriteInfoLog("未找到匹配的证书: " + hello.ServerName)
+			return nil, fmt.Errorf("未找到匹配的证书: %s", hello.ServerName)
+		},
+	}
+}
+
+// SendToWechat: 发送消息到微信
+func SendToWechat(key string, title string, content string) {
+	// 对标题和内容进行编码，处理空格和换行
+	safeTitle := url.QueryEscape(title)
+	safeContent := url.QueryEscape(content)
+	apiURL := fmt.Sprintf("https://sctapi.ftqq.com/%s.send?title=%s&desp=%s", key, safeTitle, safeContent)
+
+	resp, err := http.Get(apiURL)
+	if err != nil {
+		loggz.WriteInfoLog(fmt.Sprintf("发送失败: %v", err))
+		return
+	}
+	defer resp.Body.Close()
 }

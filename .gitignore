@@ -1,4 +1,5 @@
 certs/
 server_conf.json
+v5_conf.json
 *.exe
 webServer
