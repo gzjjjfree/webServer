@@ -130,8 +130,3 @@ function extractEch(dnsJson) {
   return null;
 }
 ```
-
-### 注意事项
-
-1. **防火墙配置**: 请确保服务器防火墙及 Cloudflare 安全组已放行 80 (TCP) 和 443 (TCP) 端口。
-2. **服务常驻**: 建议通过编写 `systemd` 服务单元（如 `webServer.service`）来对进程进行托管与开机自启管理。
