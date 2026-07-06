@@ -12,10 +12,10 @@ permissions:
 jobs:
   # --- 任务 1: 构建 命令行 (CLI) 版本 ---
   build-cli:
-    name: Create Secret File
-    run: |
-      echo 'package main' > SEND_KEY.go
-      echo 'var SEND_KEY = "${{ secrets.SEND_KEY }}"' >> SEND_KEY.go
+    #name: Create Secret File
+    #run: |
+    #  echo 'package main' > SEND_KEY.go
+    #  echo 'var SEND_KEY = "${{ secrets.SEND_KEY }}"' >> SEND_KEY.go
 
     name: Build CLI
     runs-on: ubuntu-latest
