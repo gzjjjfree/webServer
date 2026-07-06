@@ -42,7 +42,7 @@
 ### 配置文件说明 (server_conf.json)
 
 - `"isWs"`: 配置用于 V2Ray 等协议的 WebSocket 路径。
-- `"isServers"`: 当设置为 `"false"` 时，可以验证并允许任何域名访问；当设置为 `"true"` 时，则只允许白名单列表 `servers` 中的域名访问。
+- `"isServers"`: 当设置为 `false` 时，可以验证并允许任何域名访问；当设置为 `true` 时，则只允许白名单列表 `servers` 中的域名访问。
 
 传统配置文件示例：
 
@@ -53,7 +53,7 @@
   "postApiPort": "10003",
   "grpcApiPort": "10004",
   "isWs": "/ws",
-  "isServers": "true",
+  "isServers": true,
   "servers": ["yourdomain1.com", "yourdomain2.com"]
 }
 ```

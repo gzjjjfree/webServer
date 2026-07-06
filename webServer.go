@@ -15,7 +15,6 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/gzjjjfree/loggz"
 )
 
@@ -41,11 +40,13 @@ func main() {
 
 // Config 对应 JSON 配置文件结构
 type Config struct {
-	V2rayPort   string `json:"v2rayPort"`
-	GetApiPort  string `json:"getApiPort"`
-	PostApiPort string `json:"postApiPort"`
-	GrpcApiPort string `json:"grpcApiPort"`
-	IsWs        string `json:"isWs"`
+	V2rayPort   string   `json:"v2rayPort"`
+	GetApiPort  string   `json:"getApiPort"`
+	PostApiPort string   `json:"postApiPort"`
+	GrpcApiPort string   `json:"grpcApiPort"`
+	IsWs        string   `json:"isWs"`
+	IsServers   bool     `json:"isServers"`
+	Servers     []string `json:"servers"`
 }
 
 type CertManager struct {
@@ -208,7 +209,7 @@ func RegisterHostRouter() {
 		server := &http.Server{
 			Addr:      ":443",
 			Handler:   mainHandler, // 你的主路由
-			TLSConfig: cm.GetConfig(),
+			TLSConfig: cm.GetConfig(conf),
 		}
 
 		// 5. 启动服务（由于证书已经在 TLSConfig 中指明，这里的路径参数直接传空字符串）
@@ -228,7 +229,7 @@ func (cm *CertManager) LoadCerts() error {
 
 	var tempCerts []tls.Certificate
 	for _, file := range files {
-		// 匹配逻辑：gzbaobao.pem 且存在 gzbaobao.key
+		// 匹配逻辑：*.pem 且存在 *.key
 		if !file.IsDir() && strings.HasSuffix(file.Name(), ".pem") && !strings.HasSuffix(file.Name(), ".key.pem") {
 			prefix := strings.TrimSuffix(file.Name(), ".pem")
 			certPath := filepath.Join(cm.certDir, file.Name())
@@ -250,45 +251,29 @@ func (cm *CertManager) LoadCerts() error {
 	return nil
 }
 
-// WatchConfig 监听文件夹变动
-func (cm *CertManager) WatchConfig() {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		panic(err)
-	}
-
-	go func() {
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if !ok {
-					return
-				}
-				// 监听写入和创建事件
-				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
-					loggz.WriteInfoLog("检测到证书文件变动，正在重新加载...")
-					go SendToWechat(sendKey, "证书文件变动", "检测到证书文件变动，正在重新加载...")
-					cm.LoadCerts()
-				}
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					return
-				}
-				loggz.WriteInfoLog(fmt.Sprint("监听错误:", err))
-			}
-		}
-	}()
-
-	err = watcher.Add(cm.certDir)
-	if err != nil {
-		panic(err)
-	}
-}
-
 // GetConfig 获取用于 http.Server 的 TLSConfig
-func (cm *CertManager) GetConfig() *tls.Config {
+func (cm *CertManager) GetConfig(conf *Config) *tls.Config {
 	return &tls.Config{
 		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			// 如果开启了服务器域名白名单校验
+			if conf != nil && conf.IsServers {
+				allowed := false
+				// 遍历配置中的白名单列表
+				for _, domain := range conf.Servers {
+					if hello.ServerName == domain {
+						allowed = true
+						break
+					}
+				}
+
+				// 如果当前请求的 SNI 域名不在白名单内，直接拦截并返回 nil
+				if !allowed {
+					loggz.WriteInfoLog("域名不在白名单列表内，拒绝提供证书: " + hello.ServerName)
+					// 返回 nil, nil 代表让 TLS 握手失败，不会向客户端发送任何证书
+					return nil, nil
+				}
+			}
+
 			cm.mu.RLock()
 			defer cm.mu.RUnlock()
 
@@ -303,21 +288,6 @@ func (cm *CertManager) GetConfig() *tls.Config {
 			return nil, fmt.Errorf("未找到匹配的证书: %s", hello.ServerName)
 		},
 	}
-}
-
-// SendToWechat: 发送消息到微信
-func SendToWechat(key string, title string, content string) {
-	// 对标题和内容进行编码，处理空格和换行
-	safeTitle := url.QueryEscape(title)
-	safeContent := url.QueryEscape(content)
-	apiURL := fmt.Sprintf("https://sctapi.ftqq.com/%s.send?title=%s&desp=%s", key, safeTitle, safeContent)
-
-	resp, err := http.Get(apiURL)
-	if err != nil {
-		loggz.WriteInfoLog(fmt.Sprintf("发送失败: %v", err))
-		return
-	}
-	defer resp.Body.Close()
 }
 
 // SearchProxyHandler 处理搜索转发
