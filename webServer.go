@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -19,9 +18,9 @@ import (
 )
 
 func main() {
-	if SEND_KEY != "" {
-		sendKey = SEND_KEY
-	}
+	//if SEND_KEY != "" {
+	//	sendKey = SEND_KEY
+	//}
 	RegisterHostRouter()
 
 	// 保持程序运行
@@ -203,7 +202,7 @@ func RegisterHostRouter() {
 		}
 
 		// 3. 开启异步监听
-		cm.WatchConfig()
+		//cm.WatchConfig()
 
 		// 4. 将证书切片配置到自定义的 Server 结构体中
 		server := &http.Server{
@@ -291,47 +290,47 @@ func (cm *CertManager) GetConfig(conf *Config) *tls.Config {
 }
 
 // SearchProxyHandler 处理搜索转发
-func SearchProxyHandler(w http.ResponseWriter, r *http.Request) {
-	// 1. 鉴权逻辑（可选）：只有登录用户才能搜索
-	// if !checkUserLogin(r) {
-	//     http.Error(w, "请先登录", http.StatusUnauthorized)
-	//     return
-	// }
-
-	// 2. 获取前端传来的关键词
-	query := r.URL.Query().Get("q")
-	if query == "" {
-		http.Error(w, "搜索内容不能为空", http.StatusBadRequest)
-		return
-	}
-
-	// 3. 构造请求 SearXNG 的 URL
-	// 注意：我们将 format 锁定为 html，直接让 SearXNG 渲染好界面返回
-	searxngURL := fmt.Sprintf("http://127.0.0.1:8080/search?q=%s&format=html", url.QueryEscape(query))
-
-	// 4. 创建新的请求
-	req, err := http.NewRequest("GET", searxngURL, nil)
-	if err != nil {
-		http.Error(w, "创建请求失败", http.StatusInternalServerError)
-		return
-	}
-
-	// 伪装 User-Agent，防止被下游引擎识别为爬虫
-	req.Header.Set("User-Agent", r.Header.Get("User-Agent"))
-
-	// 5. 发起请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		http.Error(w, "无法连接到搜索引擎", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	// 6. 复制 SearXNG 的 Content-Type（通常是 text/html）
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-	w.WriteHeader(resp.StatusCode)
-
-	// 7. 将 SearXNG 的响应流式传输回前端 iframe
-	io.Copy(w, resp.Body)
-}
+//func SearchProxyHandler(w http.ResponseWriter, r *http.Request) {
+//	// 1. 鉴权逻辑（可选）：只有登录用户才能搜索
+//	// if !checkUserLogin(r) {
+//	//     http.Error(w, "请先登录", http.StatusUnauthorized)
+//	//     return
+//	// }
+//
+//	// 2. 获取前端传来的关键词
+//	query := r.URL.Query().Get("q")
+//	if query == "" {
+//		http.Error(w, "搜索内容不能为空", http.StatusBadRequest)
+//		return
+//	}
+//
+//	// 3. 构造请求 SearXNG 的 URL
+//	// 注意：我们将 format 锁定为 html，直接让 SearXNG 渲染好界面返回
+//	searxngURL := fmt.Sprintf("http://127.0.0.1:8080/search?q=%s&format=html", url.QueryEscape(query))
+//
+//	// 4. 创建新的请求
+//	req, err := http.NewRequest("GET", searxngURL, nil)
+//	if err != nil {
+//		http.Error(w, "创建请求失败", http.StatusInternalServerError)
+//		return
+//	}
+//
+//	// 伪装 User-Agent，防止被下游引擎识别为爬虫
+//	req.Header.Set("User-Agent", r.Header.Get("User-Agent"))
+//
+//	// 5. 发起请求
+//	client := &http.Client{}
+//	resp, err := client.Do(req)
+//	if err != nil {
+//		http.Error(w, "无法连接到搜索引擎", http.StatusBadGateway)
+//		return
+//	}
+//	defer resp.Body.Close()
+//
+//	// 6. 复制 SearXNG 的 Content-Type（通常是 text/html）
+//	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+//	w.WriteHeader(resp.StatusCode)
+//
+//	// 7. 将 SearXNG 的响应流式传输回前端 iframe
+//	io.Copy(w, resp.Body)
+//}
