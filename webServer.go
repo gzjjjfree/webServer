@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -111,6 +112,9 @@ func RegisterHostRouter() {
 	postProxy := newProxy(conf.PostApiPort, "/postapi")
 	grpcProxy := newProxy(conf.GrpcApiPort, "/grpcapi")
 
+	// 注册搜索代理路由
+	searxProxy := newProxy("8080", "/sxng")
+
 	// 静态文件服务器
 	fs := http.FileServer(http.Dir("./html"))
 
@@ -141,6 +145,13 @@ func RegisterHostRouter() {
 		if strings.HasPrefix(path, "/grpcapi") {
 			loggz.WriteInfoLog("PostAPI 转发: " + r.RequestURI)
 			grpcProxy.ServeHTTP(w, r)
+			return
+		}
+
+		// 拦截搜索主接口
+		if strings.HasPrefix(path, "/sxng") {
+			loggz.WriteInfoLog("SearXNG 搜索转发: " + r.RequestURI)
+			searxProxy.ServeHTTP(w, r)
 			return
 		}
 
@@ -307,4 +318,50 @@ func SendToWechat(key string, title string, content string) {
 		return
 	}
 	defer resp.Body.Close()
+}
+
+// SearchProxyHandler 处理搜索转发
+func SearchProxyHandler(w http.ResponseWriter, r *http.Request) {
+	// 1. 鉴权逻辑（可选）：只有登录用户才能搜索
+	// if !checkUserLogin(r) {
+	//     http.Error(w, "请先登录", http.StatusUnauthorized)
+	//     return
+	// }
+
+	// 2. 获取前端传来的关键词
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		http.Error(w, "搜索内容不能为空", http.StatusBadRequest)
+		return
+	}
+
+	// 3. 构造请求 SearXNG 的 URL
+	// 注意：我们将 format 锁定为 html，直接让 SearXNG 渲染好界面返回
+	searxngURL := fmt.Sprintf("http://127.0.0.1:8080/search?q=%s&format=html", url.QueryEscape(query))
+
+	// 4. 创建新的请求
+	req, err := http.NewRequest("GET", searxngURL, nil)
+	if err != nil {
+		http.Error(w, "创建请求失败", http.StatusInternalServerError)
+		return
+	}
+
+	// 伪装 User-Agent，防止被下游引擎识别为爬虫
+	req.Header.Set("User-Agent", r.Header.Get("User-Agent"))
+
+	// 5. 发起请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "无法连接到搜索引擎", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// 6. 复制 SearXNG 的 Content-Type（通常是 text/html）
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(resp.StatusCode)
+
+	// 7. 将 SearXNG 的响应流式传输回前端 iframe
+	io.Copy(w, resp.Body)
 }

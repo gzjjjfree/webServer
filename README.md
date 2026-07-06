@@ -1,40 +1,50 @@
 # WebServer (Go)
 
-这是一个基于 Go 语言开发的高性能前端服务器，集成了 **自动 HTTPS 证书管理 (ACME)**、**WebSocket 转发**、**gRPC 支持** 以及 **多域名动态路由** 功能。
+这是一个基于 Go 语言开发的高性能前端服务器，专门针对 **Cloudflare CDN** 与 **ECH (Encrypted Client Hello)** 优化定制。项目集成了 WebSocket 转发、gRPC 支持、多域名动态路由以及静态文件托管功能。新版本已全面移除了原有的 ACME 自动证书管理，改由 Cloudflare 源服务器证书提供更安全的边缘保护。
 
 ### 核心特性
 
-- **自动证书管理**: 集成 `autocert` (Let's Encrypt)，支持根据配置文件中的域名列表动态申请、验证并自动续期 SSL 证书。
+- **Cloudflare 深度集成**: 充分利用 Cloudflare 的网络加速与安全防护，结合自建 Workers 有效解决 ECH 缓存过期导致的网络连通性问题。
 - **智能协议转发**:
-  - **WebSocket**: 专门针对 `/ws` 路径优化，支持 V2Ray 等协议的持久连接，通过设置 `FlushInterval: -1` 确保数据实时透传。
-  - **RESTful API**: 区分 `/getapi` 和 `/postapi` 转发到不同的后端服务端口。
-  - **gRPC**: 支持 `/grpcapi` 路径的流量转发。
-- **静态文件托管**: 默认根路径 `/` 映射到本地 `./html` 目录。
-- **自动 HTTPS 跳转**: 监听 80 端口，自动处理 ACME 验证挑战并将普通 HTTP 请求重定向至 443 端口。
-- **多域名白名单**: 只有在配置文件白名单中的域名才会被允许访问及申请证书（当 `isServers` 为 `true` 时）。
+  - **WebSocket**: 针对 `/ws` 路径深度优化，完美支持 V2Ray 等协议的持久连接，通过 `FlushInterval: -1` 实现数据的实时零延迟透传。
+  - **RESTful API**: 精准区分 `/getapi` 和 `/postapi` 并将其高效转发至不同的后端服务端口。
+  - **gRPC**: 完美支持 `/grpcapi` 路径的高性能流量转发。
+- **静态文件托管**: 默认将根路径 `/` 映射到本地的 `./html` 目录。
+- **多域名安全路由**: 支持白名单机制，只有配置文件中指定的域名才允许访问（当 `isServers` 为 `true` 时）。
 
-### 部署建议
+### 运行前置条件
 
-建议将项目部署在 `/usr/local/webServer` 目录下，以符合 Linux 软件安装规范。
+在部署和运行本项目之前，**必须**依次确认并满足以下 6 项前置条件：
 
-```bash
-# 创建部署目录
-sudo mkdir -p /usr/local/webServer/html
+1. **必须拥有自有域名**: 项目运行必须绑定并依赖自有的独立域名。
+2. **域名接入 Cloudflare CDN**: 域名必须已开启 Cloudflare 的 CDN 代理（即小黄云状态），并将解析准确指向服务器的真实 IP。
+3. **自建 Cloudflare Workers 服务**: 必须在 Cloudflare 上建立并配置用于解析 ECH 的 Workers 服务。此举是为了解决“先有鸡还是先有蛋”的问题（即当 ECH 过期后无法直接科学上网，导致无法访问官方的 ECH 解析服务，必须通过自建的 Workers 服务来进行中转解析）。
+4. **配置源服务器证书**: 必须在 Cloudflare 后台生成“源服务器证书”（Origin Certificate），并将获取的证书文件放入 `certs` 文件夹下。
+   - **自动同步**: 在运行 `deploy.sh` 脚本前，可将 `certs` 文件夹与 `deploy.sh` 放在同一目录下，脚本会自动将证书复制到目标部署目录。
+   - **手动同步**: 亦可自行将 `certs` 文件夹复制到 `/usr/local/myserver/webServer/` 目录下。完成复制后，必须执行 `systemctl restart webServer` 命令重启一次服务以正确读入新证书。
+5. **Windows 端环境修改**: 若在 Windows 端进行本地测试或运行，启动前必须将配置文件中的 `"yourdomain.com"` 替换为您自己的实际域名。
+6. **脚本安全审查**: 在将 `deploy.sh` 复制到服务器运行之前，**必须先行查看、逐行审计并完全理解 `deploy.sh` 中的每一行命令**，切勿盲目执行。
 
-# 将编译好的文件和配置文件移动到该目录
-sudo cp webServer /usr/local/webServer/
-sudo cp server_conf.json /usr/local/webServer/
+### 部署与目录结构
 
-# 进入目录并运行，自动运行请查看 webServer.service
-cd /usr/local/webServer
-sudo ./webServer
+建议将项目统一部署在 `/usr/local/myserver/webServer/` 目录下，以确保环境的一致性与规范性。
+
+#### 标准目录结构
+
+```text
+/usr/local/myserver/webServer/
+├── webServer          # 编译后的 Go 可执行文件
+├── server_conf.json   # 配置文件
+├── html/              # 静态文件根目录 (需手动创建并放入 index.html)
+└── certs/             # Cloudflare 源服务器证书存放目录 (存放证书及私钥)
 ```
 
 ### 配置文件说明 (server_conf.json)
 
-#### "isWs" 路径为 v2ray ws 路径，
+- `"isWs"`: 配置用于 V2Ray 等协议的 WebSocket 路径。
+- `"isServers"`: 当设置为 `"false"` 时，可以验证并允许任何域名访问；当设置为 `"true"` 时，则只允许白名单列表 `servers` 中的域名访问。
 
-#### "isServers" 为 "false" 时，可验证任何域名，
+传统配置文件示例：
 
 ```json
 {
@@ -48,19 +58,80 @@ sudo ./webServer
 }
 ```
 
-### 项目结构
+### 附录：Cloudflare Workers ECH 解析服务脚本
 
-```text
-/usr/local/webServer/
-├── webServer           # 编译后的可执行文件
-├── server_conf.json    # 配置文件
-├── html/               # 静态文件根目录 (需手动创建并放入 index.html)
-└── certs/              # 自动生成的证书存放目录 (程序启动后自动创建)
+您可以将自建的 Workers 脚本代码配置于此处。用以通过自建中转节点提供不依赖官方域名的安全 DOH 解析，彻底打通网络初始连通性。
+
+```javascript
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    const domain = url.searchParams.get("domain");
+
+    if (domain) {
+      try {
+        const dohUrl = `https://1.1.1.1/dns-query?name=${domain}&type=65`;
+        const response = await fetch(dohUrl, {
+          headers: { accept: "application/dns-json" },
+        });
+        const json = await response.json();
+
+        const echConfig = extractEch(json);
+        if (echConfig) {
+          return new Response(echConfig, {
+            headers: { "Content-Type": "text/plain" },
+          });
+        }
+        return new Response("ECH not found in record", { status: 404 });
+      } catch (e) {
+        return new Response("Error: " + e.message, { status: 500 });
+      }
+    }
+    return new Response("Missing domain", { status: 400 });
+  },
+};
+
+function extractEch(dnsJson) {
+  if (!dnsJson.Answer) return null;
+
+  for (const record of dnsJson.Answer) {
+    if (record.type === 65) {
+      const data = record.data;
+
+      // 情况 A: 已经是易读格式 ech="xxx"
+      const match = data.match(/ech="([^"]+)"/);
+      if (match) return match[1];
+
+      // 情况 B: 十六进制格式 \# <len> <hex_data>
+      if (data.startsWith("\\#")) {
+        // 移除前缀 "\# 136 "（具体的长度数字可能不同）
+        const parts = data.split(" ");
+        // 真正的十六进制数据从索引 2 或 3 开始，我们将所有部分合并
+        const hex = parts.slice(2).join("");
+
+        // ECH 的标识符是 0005
+        const echIndex = hex.indexOf("0005");
+        if (echIndex !== -1) {
+          // 0005 后面是 2 字节长度 (4个字符)
+          const lenHex = hex.substring(echIndex + 4, echIndex + 8);
+          const len = parseInt(lenHex, 16);
+          // 提取 ECH 核心数据
+          const echHex = hex.substring(echIndex + 8, echIndex + 8 + len * 2);
+
+          // 将 Hex 转换为 Uint8Array，再转为 Base64
+          const bytes = new Uint8Array(
+            echHex.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)),
+          );
+          return btoa(String.fromCharCode(...bytes));
+        }
+      }
+    }
+  }
+  return null;
+}
 ```
 
 ### 注意事项
 
-1.  **权限**: 监听 80 和 443 端口需要以 root 权限运行程序（`sudo`）。
-2.  **防火墙**: 请确保服务器防火墙已开放 80 (TCP) 和 443 (TCP) 端口。
-3.  **ACME 挑战**: 域名首次访问时会触发证书申请，可能存在几秒钟的初始化延迟。
-4.  **持久化运行**: 建议使用 `nohup` 或编写 `systemd` 服务单元来保持程序在后台持续运行。
+1. **防火墙配置**: 请确保服务器防火墙及 Cloudflare 安全组已放行 80 (TCP) 和 443 (TCP) 端口。
+2. **服务常驻**: 建议通过编写 `systemd` 服务单元（如 `webServer.service`）来对进程进行托管与开机自启管理。
