@@ -1,0 +1,66 @@
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    const domain = url.searchParams.get("domain");
+
+    if (domain) {
+      try {
+        const dohUrl = `https://1.1.1.1/dns-query?name=${domain}&type=65`;
+        const response = await fetch(dohUrl, {
+          headers: { accept: "application/dns-json" },
+        });
+        const json = await response.json();
+
+        const echConfig = extractEch(json);
+        if (echConfig) {
+          return new Response(echConfig, {
+            headers: { "Content-Type": "text/plain" },
+          });
+        }
+        return new Response("ECH not found in record", { status: 404 });
+      } catch (e) {
+        return new Response("Error: " + e.message, { status: 500 });
+      }
+    }
+    return new Response("Missing domain", { status: 400 });
+  },
+};
+
+function extractEch(dnsJson) {
+  if (!dnsJson.Answer) return null;
+
+  for (const record of dnsJson.Answer) {
+    if (record.type === 65) {
+      const data = record.data;
+
+      // 情况 A: 已经是易读格式 ech="xxx"
+      const match = data.match(/ech="([^"]+)"/);
+      if (match) return match[1];
+
+      // 情况 B: 十六进制格式 \# <len> <hex_data>
+      if (data.startsWith("\\#")) {
+        // 移除前缀 "\# 136 "（具体的长度数字可能不同）
+        const parts = data.split(" ");
+        // 真正的十六进制数据从索引 2 或 3 开始，我们将所有部分合并
+        const hex = parts.slice(2).join("");
+
+        // ECH 的标识符是 0005
+        const echIndex = hex.indexOf("0005");
+        if (echIndex !== -1) {
+          // 0005 后面是 2 字节长度 (4个字符)
+          const lenHex = hex.substring(echIndex + 4, echIndex + 8);
+          const len = parseInt(lenHex, 16);
+          // 提取 ECH 核心数据
+          const echHex = hex.substring(echIndex + 8, echIndex + 8 + len * 2);
+
+          // 将 Hex 转换为 Uint8Array，再转为 Base64
+          const bytes = new Uint8Array(
+            echHex.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)),
+          );
+          return btoa(String.fromCharCode(...bytes));
+        }
+      }
+    }
+  }
+  return null;
+}

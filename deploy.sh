@@ -3,6 +3,21 @@
 
 # sed -i 's/\r//' ./deploy.sh
 
+# ==============================================================
+# 问题1：运行开始后的前期准备提醒
+# ==============================================================
+echo "======================================================="
+echo "请先进行前期准备："
+echo "1、必须先申请域名。不然后期自行配置。"
+echo "2、域名强烈建议由 coudflare 进行 CDN 代理，如果是 CDN 代理的话，请先申请长期证书放在 deploy.sh 同目录的 certs 目录下，并在 coudflare 上建立好 works 应用，代码是本项目的 ECH.works 文件，works 必须使用自定义域名。"
+echo "======================================================="
+read -p "是否已完成以上准备工作？(输入 y 继续运行，输入 n 去做准备工作): " READY_CHOICE
+if [[ "$READY_CHOICE" != "y" && "$READY_CHOICE" != "Y" ]]; then
+    echo "请完成准备工作后再运行本脚本，脚本已退出。"
+    exit 0
+fi
+echo
+
 # --- 配置区 ---
 BASE_DIR="/usr/local/myserver"
 WEBSERVER_DIR="$BASE_DIR/webServer"
@@ -43,7 +58,6 @@ download_file() {
 
     # 判断是 GitHub API 还是直接下载链接
     if [[ "$url" == *"api.github.com"* ]]; then
-        # 动态替换变量名 (解决你之前的 \$repo 错误)
         local target_url="${url/\$repo/$repo}"
         
         # 1. 解析 API 获取下载地址
@@ -71,12 +85,12 @@ download_file() {
 echo "开始部署服务器组件...";
 echo
 
-# 定义 API 模板 (注意这里用单引号，防止在本行就被解析)
+# 定义 API 模板
 API_URL='https://api.github.com/repos/$repo/releases/latest'
 
 # 1. 部署 webServer
 download_file "$REPO_WEBSERVER" "webServer" "$WEBSERVER_DIR/webServer" "$API_URL"
-echo "webServer  已部署";
+echo "webServer 已部署";
 echo
 
 # 2. 部署 v5-result
@@ -94,19 +108,38 @@ download_file "$REPO_V5RESULT" "android-arm64" "$WEBSERVER_DIR/html/windows/v5-r
 echo "v5-result-android 已部署";
 echo
 
-# 4. 下载 geosite.dat (直接传入 Raw 链接，函数会自动识别并直接下载)
+# 4. 下载 geosite.dat
 RAW_URL="https://raw.githubusercontent.com/gzjjjfree/v5-result/v5-result/geosite.dat"
 download_file "$REPO_V5RESULT" "geosite" "$WEBSERVER_DIR/html/windows/geosite.dat" "$RAW_URL"
 echo "geosite.dat 已下载";
 echo
 
-# 5. 下载 result.json (如果需要的话，可以直接下载到 Windows 客户端目录)
+# 5. 下载 result.json
 RAW_RESULT_URL="https://raw.githubusercontent.com/gzjjjfree/webServer/result/result.json"
 download_file "$REPO_WEBSERVER" "result" "$WEBSERVER_DIR/html/windows/result/result.json" "$RAW_RESULT_URL"
 echo "result.json 已下载";
 echo
 
-# 初始化配置文件 (如果不存在)
+
+# ==============================================================
+# 问题2：生成前端服务配置文件前的 CDN 询问逻辑
+# ==============================================================
+read -p "是否使用 CDN 代理？(y/n): " IS_CDN_INPUT
+if [[ "$IS_CDN_INPUT" == "y" || "$IS_CDN_INPUT" == "Y" ]]; then
+    USE_CDN=true
+    SERVER_CONF_IS_SERVERS="false"
+    SERVER_CONF_SERVERS="[]"
+else
+    USE_CDN=false
+    SERVER_CONF_IS_SERVERS="true"
+    read -p "请输入域名 (多个域名请用英文逗号 ',' 分开): " USER_DOMAINS
+    # 替换逗号为 JSON 格式所需的 ","
+    FORMATTED_DOMAINS=$(echo "$USER_DOMAINS" | sed 's/,/","/g')
+    SERVER_CONF_SERVERS="[\"$FORMATTED_DOMAINS\"]"
+    # 提取第一个域名用于后面的客户端配置备用
+    FIRST_DOMAIN=$(echo "$USER_DOMAINS" | cut -d',' -f1)
+fi
+
 # 生成前端服务配置文件
 if [ ! -f "$WEBSERVER_DIR/server_conf.json" ]; then
     cat <<EOF > "$WEBSERVER_DIR/server_conf.json"
@@ -115,7 +148,10 @@ if [ ! -f "$WEBSERVER_DIR/server_conf.json" ]; then
   "getApiPort": "10002",
   "postApiPort": "10003",
   "grpcApiPort": "10004",
-  "isWs": "/ws"
+  "isWs": "/ws",
+  "isServers": $SERVER_CONF_IS_SERVERS,
+  "servers":
+  $SERVER_CONF_SERVERS
 }
 EOF
     echo "已生成默认 server_conf.json。";
@@ -123,11 +159,9 @@ EOF
 fi
 
 # 生成 v5 服务配置文件
-# 生成并存储到一个变量中
 USER_UUID=$(cat /proc/sys/kernel/random/uuid)
 echo -e "本次生成的 UUID 为:  \e[1;37;44m$USER_UUID\e[0m";
 echo
-# 生成服务端配置文件
 if [ ! -f "$V5RESULT_DIR/v5_conf.json" ]; then
     cat <<EOF > "$V5RESULT_DIR/v5_conf.json"
 {
@@ -164,6 +198,27 @@ EOF
     echo -e "已生成 v5-result 服务端默认配置文件 \e[1;37;44mv5_conf.json\e[0m。";    
 fi
 
+
+# ==============================================================
+# 问题3：生成 v5-result-windows 客户端配置文件前的逻辑
+# ==============================================================
+if [ "$USE_CDN" = true ]; then
+    read -p "请输入主域名 (domain): " CLIENT_DOMAIN
+    read -p "请输入 ECH 的自定义域名 (echdomain) 注: 不要带 "https://" 头: " CLIENT_ECH_DOMAIN
+    CLIENT_ADDRESS="104.18.86.206"
+    CLIENT_ECH_CONF="\"echDohServer\": \"$CLIENT_ECH_DOMAIN\","
+    ROUTING_RULE_TAG="\"balancerTag\": \"cdn-balancer-proxy\","
+else
+    # 非 CDN 模式，如果前面已经获取过域名，直接复用
+    CLIENT_DOMAIN="$FIRST_DOMAIN"
+    if [ -z "$CLIENT_DOMAIN" ]; then
+        read -p "请输入主域名 (domain): " CLIENT_DOMAIN
+    fi
+    read -p "请输入服务器 IP 地址 (addrIP): " CLIENT_ADDRESS
+    CLIENT_ECH_CONF="\"echDohServer\": \"\","
+    ROUTING_RULE_TAG="\"outboundTag\":  \"cdn-proxy\","
+fi
+
 # 生成 v5-result-windows 客户端配置文件
 if [ ! -f "$WEBSERVER_DIR/html/windows/config.json" ]; then
     cat <<EOF > "$WEBSERVER_DIR/html/windows/config.json"
@@ -195,11 +250,11 @@ if [ ! -f "$WEBSERVER_DIR/html/windows/config.json" ]; then
       "settings": {
         "vnext": [
           {
-            "address": "104.18.86.206",
+            "address": "$CLIENT_ADDRESS",
             "port": 443,
             "users": [
               {
-                "id": "服务器生成的 UUID, 修改的话需要和服务器端一致",
+                "id": "$USER_UUID",
                 "encryption": "none"
               }
             ]
@@ -210,14 +265,14 @@ if [ ! -f "$WEBSERVER_DIR/html/windows/config.json" ]; then
         "network": "ws",
         "security": "tls",
         "tlsSettings": {
-          "serverName": "yourdomain.com",                       
-          "echDohServer": "yourechdohserver.com",
+          "serverName": "$CLIENT_DOMAIN",                       
+          $CLIENT_ECH_CONF
           "allowInsecure": false
         },
         "wsSettings": {
           "path": "/ws",
           "headers": {
-            "Host": "yourdomain.com",
+            "Host": "$CLIENT_DOMAIN",
             "User-Agent": "ws-client"
           }
         }
@@ -253,7 +308,7 @@ if [ ! -f "$WEBSERVER_DIR/html/windows/config.json" ]; then
     "rules": [
       {
         "type": "field",
-        "balancerTag": "cdn-balancer-proxy",
+        $ROUTING_RULE_TAG
         "domain": [
           "geosite:geolocation-!cn"
         ],
@@ -279,6 +334,10 @@ EOF
     echo
 fi
 
+# ==============================================================
+# 后续原有的服务生成与启动逻辑
+# ==============================================================
+
 # 生成前端服务自动化启动文件, 将服务内容定义为变量
 SERVICE_TEMPLATE=$(cat <<EOF
 # 直接编辑系统服务文件
@@ -300,33 +359,12 @@ Restart=always
 
 [Install]
 WantedBy=multi-user.target
-
-# 使用复制及重新加载系统服务
-# sudo cp $WEBSERVER_DIR/webServer.service /usr/lib/systemd/system/webServer.service
-# sudo systemctl daemon-reload
-
-# 启动及停止服务
-# sudo systemctl start webServer
-# sudo systemctl stop webServer
-
-# 设置开机自启动及取消自启动
-# sudo systemctl enable webServer
-# sudo systemctl disable webServer
-
-# 查看运行状态
-# sudo systemctl status webServer
-
-# 代码编写完成后，使用以下命令构建 Go 程序
-# go build -o webServer webServer.go
 EOF
 )
 
-# 定义需要生成的两个目标路径
 FILE_A="$WEBSERVER_DIR/webServer.service"
 FILE_B="/usr/lib/systemd/system/webServer.service"
 
-# 分别判断并写入
-# 检查第一个路径（你的项目目录）
 if [ ! -f "$FILE_A" ]; then
     echo "$SERVICE_TEMPLATE" > "$FILE_A"    
     echo "已在 $FILE_A 生成服务文件"    
@@ -334,9 +372,7 @@ else
     echo "文件 $FILE_A 已存在，跳过"    
 fi
 
-# 检查第二个路径（系统服务目录）
 if [ ! -f "$FILE_B" ]; then
-    # 使用 sudo tee 确保有权限写入系统目录
     echo "$SERVICE_TEMPLATE" | sudo tee "$FILE_B" > /dev/null   
     echo "已在 $FILE_B 生成系统服务文件"    
 else
@@ -364,33 +400,12 @@ Restart=always
 
 [Install]
 WantedBy=multi-user.target
-
-# 使用复制及重新加载系统服务
-# sudo cp /usr/local/myserver/v5-result/v5-result.service /usr/lib/systemd/system/v5-result.service
-# sudo systemctl daemon-reload
-
-# 启动及停止服务
-# sudo systemctl start v5-result
-# sudo systemctl stop v5-result
-
-# 设置开机自启动及取消自启动
-# sudo systemctl enable v5-result
-# sudo systemctl disable v5-result
-
-# 查看运行状态
-# sudo systemctl status v5-result
-
-# 代码编写完成后，使用以下命令构建 Go 程序
-# go build -o v5-result v5-result.go
 EOF
 )
 
-# 定义需要生成的两个目标路径
 FILE_C="$V5RESULT_DIR/v5-result.service"
 FILE_D="/usr/lib/systemd/system/v5-result.service"
 
-# 分别判断并写入
-# 检查第一个路径（你的项目目录）
 if [ ! -f "$FILE_C" ]; then
     echo "$V5_TEMPLATE" > "$FILE_C"    
     echo "已在 $FILE_C 生成服务文件"   
@@ -398,9 +413,7 @@ else
     echo "文件 $FILE_C 已存在，跳过"   
 fi
 
-# 检查第二个路径（系统服务目录）
 if [ ! -f "$FILE_D" ]; then
-    # 使用 sudo tee 确保有权限写入系统目录
     echo "$V5_TEMPLATE" | sudo tee "$FILE_D" > /dev/null   
     echo "已在 $FILE_D 生成系统服务文件"    
 else
@@ -421,10 +434,10 @@ echo "部署完成！";
 echo
 echo -e "请根据生成的服务文件说明，使用 systemctl 管理服务的启动、停止和开机自启。脚本运行时\e[1;37;44m已运行\e[0m相关命令启动。";
 echo
-echo -e "如果需要修改前端服务配置，请编辑 /usr/local/myserver/webServer/\e[1;37;44mserver_conf.json\e[0m] 文件。";
-echo -e "如果需要修改 v5-result 服务配置，请编辑 /usr/local/myserver/v5-result/\e[1;37;44mv5_conf.json\e[0m] 文件。";
+echo -e "如果需要修改前端服务配置，请编辑 /usr/local/myserver/webServer/\e[1;37;44mserver_conf.json\e[0m 文件。";
+echo -e "如果需要修改 v5-result 服务配置，请编辑 /usr/local/myserver/v5-result/\e[1;37;44mv5_conf.json\e[0m 文件。";
 echo 
-echo -e "请将 /usr/local/myserver/webServer/hmtl/windows/\e[1;37;44mv5-result-windows.exe、config.json、geosite.dat 文件复制到 Windows 客户端\e[0m上, 并在 Windows 上使用相应的命令行工具运行它。";
+echo -e "请将 /usr/local/myserver/webServer/html/windows/\e[1;37;44mv5-result-windows.exe、config.json、geosite.dat 文件复制到 Windows 客户端\e[0m上, 并在 Windows 上使用相应的命令行工具运行它。";
 echo -e "下载文件可以通过指向服务器的域名访问 \e[1;37;44mhttp://yourdomain.com/windows/\e[0m 来获取, 也可以直接从服务器上复制。";
 echo -e "在 Windows 上运行 v5-result-windows.exe 的命令示例: \e[1;37;44mv5-result-windows.exe run -c config.json\e[0m";
 echo -e "可以将 v5-result-windows.exe \e[1;37;44m生成快捷方式\e[0m, 在属性->目标行末添加参数\e[1;37;44m run\e[0m, 以便在 Windows 上直接双击运行服务。";
